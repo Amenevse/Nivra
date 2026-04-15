@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KevsApp 💖</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Babel (Tarayıcıda React JSX derlemek için) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Import Map (React, Firebase ve İkonların modül bağlantıları) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+      }
+    }
+    </script>
+</head>
+<body class="bg-slate-200">
+    <!-- React uygulamasının yükleneceği ana div -->
+    <div id="root"></div>
+
+    <!-- Uygulama Kodları -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+          Heart, Clock, MessageCircle, User, MapPin, CloudSun, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, KanbanSquare, Sparkles, Coffee, ImagePlus, Wand2, Brain, Image as ImageIcon, Edit2, Upload
+        } from 'lucide-react';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInWithCustomToken, signInAnonymously, signOut, onAuthStateChanged } from 'firebase/auth';
+        import { getFirestore, collection, addDoc, setDoc, getDocs, onSnapshot, serverTimestamp, doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+
+        // ==========================================
+        // 1. CONFIG & ENVIRONMENT
+        // ==========================================
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'kevsapp-prod';
+        let app, auth, db;
+
+        try {
+          // Firebase bilgilerinizi kendi sunucunuzda kullanırken buraya manuel girebilirsiniz:
+          // const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "..." };
+          const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+          if (firebaseConfig) {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+          }
+        } catch (error) {
+          console.error("Firebase Core Initialization Error:", error);
+        }
+
+        // ==========================================
+        // 2. CORE DOMAIN SERVICES (Microservice Simulation)
+        // ==========================================
+
+        const AIService = {
+          generateText: async (prompt, systemInstruction = "") => {
+            const apiKey = ""; // Sistem API Key'i enjekte eder
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            
+            const payload = {
+              contents: [{ parts: [{ text: prompt }] }],
+              systemInstruction: { parts: [{ text: systemInstruction }] }
+            };
+
+            const fetchWithRetry = async (retries = 5, delay = 1000) => {
+              try {
+                const response = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error('AI API Error');
+                const data = await response.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || "Bağlantı kurulamadı.";
+              } catch (error) {
+                if (retries > 0) {
+                  await new Promise(resolve => setTimeout(resolve, delay));
+                  return fetchWithRetry(retries - 1, delay * 2);
+                }
+                throw error;
+              }
+            };
+            return fetchWithRetry();
+          },
+
+          generateImage: async (prompt) => {
+            const apiKey = ""; 
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+            const payload = { instances: { prompt: prompt }, parameters: { sampleCount: 1 } };
+            
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error('Imagen API Error');
+            const data = await response.json();
+            return `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
+          }
+        };
+
+        const UserService = {
+          createUser: async (uid, userData) => {
+            return await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userData.username), {
+              ...userData,
+              currentUid: uid,
+              createdAt: serverTimestamp()
+            });
+          },
+          loginUser: async (uid, username) => {
+            return await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), { currentUid: uid }, { merge: true });
+          },
+          logoutUser: async (username) => {
+            return await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), { currentUid: null }, { merge: true });
+          },
+          updateProfile: async (username, updates) => {
+            return await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), updates);
+          }
+        };
+
+        const RelationshipService = {
+          sendRequest: async (senderUsername, targetUsername) => {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUsername), { pendingRequests: arrayUnion(senderUsername) });
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', senderUsername), { sentRequests: arrayUnion(targetUsername) });
+          },
+          acceptRequest: async (user1Username, user2Username) => {
+            const relRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'relationships'), {
+              user1Id: user1Username, user2Id: user2Username, status: 'active', createdAt: serverTimestamp()
+            });
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { 
+              partnerId: user2Username, relationshipId: relRef.id, pendingRequests: [], sentRequests: [] 
+            });
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { 
+              partnerId: user1Username, relationshipId: relRef.id, pendingRequests: [], sentRequests: [] 
+            });
+          },
+          rejectRequest: async (user1Username, user2Username) => {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { pendingRequests: arrayRemove(user2Username) });
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { sentRequests: arrayRemove(user1Username) });
+          },
+          disconnect: async (user1Username, user2Username) => {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { partnerId: null, relationshipId: null });
+            if (user2Username) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { partnerId: null, relationshipId: null });
+          }
+        };
+
+        const MessageService = {
+          sendMessage: async (relationshipId, senderId, text, type = 'text', imageUrl = null) => {
+            return await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), {
+              relationshipId, senderId, type, text, imageUrl, createdAt: serverTimestamp()
+            });
+          }
+        };
+
+        const MemoryService = {
+          createMemory: async (relationshipId, senderId, text, imageUrl, context) => {
+            return await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'memories'), {
+              relationshipId, senderId, text, imageUrl, location: context.location, weather: context.weather, bpm: context.bpm, aiGenerated: true, createdAt: serverTimestamp()
+            });
+          }
+        };
+
+        // ==========================================
+        // 3. UI COMPONENTS & ASSETS
+        // ==========================================
+        const AppLogo = ({ className = "w-32 h-32" }) => (
+          <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+            <path d="M 45 90 C 40 120 60 135 95 135 C 95 135 105 160 115 150 C 120 145 110 130 110 130 C 135 125 155 105 155 75" stroke="#EB4F74" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M 155 75 C 155 45 125 35 100 35 C 65 35 45 55 45 80" stroke="#EB4F74" strokeWidth="5" strokeLinecap="round"/>
+            <path d="M 100 110 C 100 110 60 80 60 60 C 60 40 85 40 100 55 C 115 40 140 40 140 60 C 140 80 100 110 100 110" fill="#44CDD5"/>
+            <circle cx="145" cy="45" r="22" fill="#44CDD5" stroke="#EB4F74" strokeWidth="3"/>
+            <text x="145" y="53" fill="#EB4F74" fontSize="24" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle">1</text>
+            <line x1="115" y1="15" x2="122" y2="25" stroke="#EB4F74" strokeWidth="4" strokeLinecap="round"/>
+            <line x1="102" y1="32" x2="112" y2="35" stroke="#EB4F74" strokeWidth="4" strokeLinecap="round"/>
+            <text x="100" y="180" fontSize="46" fontFamily="'Comic Sans MS', cursive, sans-serif" textAnchor="middle" fontWeight="bold" letterSpacing="1">
+              <tspan fill="#EB4F74">Kevs</tspan><tspan fill="#8B6BB1">A</tspan><tspan fill="#44CDD5">pp</tspan>
+            </text>
+          </svg>
+        );
+
+        const romanticImages = [
+          "https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&q=80",
+          "https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&w=600&q=80"
+        ];
+
+        // ==========================================
+        // 4. MAIN APPLICATION COMPONENT
+        // ==========================================
+        function App() {
+          const [user, setUser] = useState(null);
+          const [allUsers, setAllUsers] = useState([]);
+          const [userProfile, setUserProfile] = useState(null);
+          const [partnerProfile, setPartnerProfile] = useState(null);
+          const [isProfileLoading, setIsProfileLoading] = useState(true);
+          
+          const [authMode, setAuthMode] = useState('login');
+          const [emailInput, setEmailInput] = useState('');
+          const [usernameInput, setUsernameInput] = useState('');
+          const [passwordInput, setPasswordInput] = useState('');
+          const [authError, setAuthError] = useState('');
+          const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+          const [activeTab, setActiveTab] = useState('home');
+          const [journeyTab, setJourneyTab] = useState('timeline');
+          const [memories, setMemories] = useState([]);
+          const [isGeneratingMemory, setIsGeneratingMemory] = useState(false);
+          const [activeVrRoom, setActiveVrRoom] = useState(null);
+          
+          const [showPhotoModal, setShowPhotoModal] = useState(false);
+          const [photoMode, setPhotoMode] = useState('gallery');
+          const [aiPhotoPrompt, setAiPhotoPrompt] = useState('');
+          const [photoPreviewUrl, setPhotoPreviewUrl] = useState(null);
+          const [isGeneratingPhoto, setIsGeneratingPhoto] = useState(false);
+          const [isEditingProfile, setIsEditingProfile] = useState(false);
+          const [profileForm, setProfileForm] = useState({ fullName: '', age: '', gender: '' });
+          const [chatMessages, setChatMessages] = useState([]);
+          const [chatInput, setChatInput] = useState('');
+          const [searchQuery, setSearchQuery] = useState('');
+          const [searchResults, setSearchResults] = useState([]);
+          const [isCalling, setIsCalling] = useState(false);
+          
+          const chatEndRef = useRef(null);
+
+          useEffect(() => {
+            if (!auth) return;
+            const initAuth = async () => {
+              try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+              } catch (e) { console.error("Giriş hatası", e); }
+            };
+            initAuth();
+            const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+              setUser(currentUser);
+              if (!currentUser) setIsProfileLoading(false);
+            });
+            return () => unsubscribe();
+          }, []);
+
+          useEffect(() => {
+            if (!user || !db) return;
+            const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snapshot) => {
+              const usersList = snapshot.docs.map(doc => doc.data());
+              setAllUsers(usersList);
+              
+              const me = usersList.find(u => u.currentUid === user.uid);
+              setUserProfile(me || null);
+              if (me && me.partnerId) setPartnerProfile(usersList.find(u => u.username === me.partnerId) || null);
+              else setPartnerProfile(null);
+              
+              setIsProfileLoading(false);
+            }, () => setIsProfileLoading(false));
+            return () => unsubUsers();
+          }, [user]);
+
+          useEffect(() => {
+            if (!user || !db || !userProfile?.relationshipId) return;
+            const relationshipId = userProfile.relationshipId;
+
+            const unsubMemories = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'memories'), (snapshot) => {
+              const mms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
+                .filter(m => m.relationshipId === relationshipId).sort((a, b) => b.ts - a.ts);
+              setMemories(mms);
+            });
+
+            const unsubMessages = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), (snapshot) => {
+              const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
+                .filter(m => m.relationshipId === relationshipId).sort((a, b) => a.ts - b.ts);
+              setChatMessages(msgs);
+            });
+
+            return () => { unsubMemories(); unsubMessages(); };
+          }, [user, userProfile]);
+
+          useEffect(() => {
+            if (activeTab === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }, [chatMessages, activeTab]);
+
+          useEffect(() => {
+            if (userProfile) setProfileForm({ fullName: userProfile.fullName || '', age: userProfile.age || '', gender: userProfile.gender || '' });
+          }, [userProfile]);
+
+          const handleAuthSubmit = async (e) => {
+            e.preventDefault();
+            if (!auth || !db || !user) return;
+            setAuthError(''); setIsAuthLoading(true);
+            const usernameKey = usernameInput.toLowerCase().trim();
+
+            try {
+              if (!usernameKey || !passwordInput.trim()) throw new Error("Gerekli alanları doldurun.");
+              if (authMode === 'register') {
+                if (!emailInput.trim()) throw new Error("E-posta gereklidir.");
+                if (allUsers.find(u => u.username === usernameKey)) throw new Error("Kullanıcı adı kullanımda.");
+                await UserService.createUser(user.uid, {
+                  username: usernameKey, email: emailInput.trim(), password: passwordInput,
+                  partnerId: null, relationshipId: null, isPublic: true, mbti: 'ENTP',
+                  fullName: '', age: '', gender: '', pendingRequests: [], sentRequests: []
+                });
+              } else {
+                const targetUser = allUsers.find(u => u.username === usernameKey);
+                if (!targetUser || targetUser.password !== passwordInput) throw new Error("Hatalı giriş.");
+                await UserService.loginUser(user.uid, usernameKey);
+              }
+            } catch (err) { setAuthError(err.message); } 
+            finally { setIsAuthLoading(false); }
+          };
+
+          const handleLogout = async () => {
+            if (userProfile) await UserService.logoutUser(userProfile.username);
+            setUsernameInput(''); setPasswordInput(''); setEmailInput('');
+          };
+
+          const handleSearchPartner = (e) => {
+            e.preventDefault();
+            if (!searchQuery.trim()) return;
+            setSearchResults(allUsers.filter(u => u.username !== userProfile.username && u.username.includes(searchQuery.toLowerCase().trim()) && !u.partnerId && u.isPublic));
+          };
+
+          const handleMissYouGenerate = async () => {
+            if (!user || !userProfile?.relationshipId) return;
+            setIsGeneratingMemory(true);
+            const context = { bpm: Math.floor(Math.random() * (120 - 70 + 1) + 70), weather: "Güneşli, 24°C", location: "Sakarya" };
+            
+            try {
+              const prompt = `Konum ${context.location}, Hava ${context.weather}, Nabız ${context.bpm} BPM. ${userProfile.username}'nin ağzından eşine romantik, 2 cümlelik özlem mesajı yaz.`;
+              const aiText = await AIService.generateText(prompt, "Sen romantik bir asistansın.");
+              const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
+              await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, aiText, imageUrl, context);
+              setActiveTab('journey'); setJourneyTab('timeline');
+            } catch (e) { console.error(e); alert("Hata oluştu."); }
+            finally { setIsGeneratingMemory(false); }
+          };
+
+          const handleSendMessage = async (e) => {
+            e.preventDefault();
+            if (!chatInput.trim() || !userProfile?.relationshipId) return;
+            const msg = chatInput; setChatInput('');
+            await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, msg, 'text');
+          };
+
+          const handleAiMediation = async () => {
+            if (!userProfile?.relationshipId) return;
+            await MessageService.sendMessage(
+              userProfile.relationshipId, 'AI_COACH', 
+              `[AŞK KOÇU] Görünüşe göre iletişimde tansiyon artıyor. Her ikinize de 10 dakikalık bir mola öneriyorum. 🧘‍♀️🎵`, 
+              'system'
+            );
+          };
+
+          const handleFileUpload = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const img = new Image();
+              img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 600; canvas.height = img.height * (600 / img.width);
+                canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                setPhotoPreviewUrl(canvas.toDataURL('image/jpeg', 0.6));
+              };
+              img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+          };
+
+          const handleAiGeneratePhoto = async () => {
+            if (!aiPhotoPrompt.trim()) return;
+            setIsGeneratingPhoto(true);
+            try {
+              const url = await AIService.generateImage(aiPhotoPrompt);
+              setPhotoPreviewUrl(url);
+            } catch (error) { alert("Görsel oluşturulamadı."); } 
+            finally { setIsGeneratingPhoto(false); }
+          };
+
+          const handleSendPhotoSurprise = async () => {
+            if (!userProfile?.relationshipId || !photoPreviewUrl) return;
+            await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, `Fotoğraf baskısı siparişi oluşturuldu! 🖼️`, 'image', photoPreviewUrl);
+            setShowPhotoModal(false); setPhotoPreviewUrl(null); setAiPhotoPrompt(''); setActiveTab('chat');
+          };
+
+          const handleSendPhysicalGift = async (item) => {
+            if (!userProfile?.relationshipId) return;
+            await MessageService.sendMessage(userProfile.relationshipId, 'SYSTEM', `[SİSTEM SÜRPRİZİ] @${userProfile.username}, partnerine sürpriz gönderdi: ${item}! 🎁`, 'system');
+            alert(`${item} başarıyla gönderildi.`);
+          };
+
+          if (!user || isProfileLoading) return <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans"><AppLogo className="w-32 h-32 animate-pulse" /></div>;
+
+          if (user && !userProfile) {
+            return (
+              <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center p-4 md:p-8 font-sans text-slate-900">
+                <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
+                  <div className="flex justify-center mb-2"><AppLogo className="w-48 h-48" /></div>
+                  <form onSubmit={handleAuthSubmit} className="space-y-4">
+                    {authMode === 'register' && <div><label className="block text-xs font-semibold text-slate-600 mb-1">E-Posta</label><input type="email" required value={emailInput} onChange={e=>setEmailInput(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-rose-500 outline-none" /></div>}
+                    <div><label className="block text-xs font-semibold text-slate-600 mb-1">Kullanıcı Adı</label><input type="text" required value={usernameInput} onChange={e=>setUsernameInput(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-rose-500 outline-none" /></div>
+                    <div><label className="block text-xs font-semibold text-slate-600 mb-1">Şifre</label><input type="password" required value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-rose-500 outline-none" /></div>
+                    {authError && <p className="text-rose-500 text-xs text-center bg-rose-50 p-2 rounded">{authError}</p>}
+                    <button disabled={isAuthLoading} className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-xl flex items-center justify-center w-full">{isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (authMode==='login'?'Giriş Yap':'Kayıt Ol')}</button>
+                  </form>
+                  <div className="mt-4 text-center"><button onClick={()=>{setAuthMode(authMode==='login'?'register':'login');setAuthError('');}} className="text-sm text-slate-500 hover:text-rose-500">{authMode==='login'?'Hesabın yok mu? Kayıt Ol':'Hesabın var mı? Giriş Yap'}</button></div>
+                </div>
+              </div>
+            );
+          }
+
+          const renderDiscoverView = () => (
+            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto animate-in fade-in pb-24">
+              <div className="text-center mb-8 mt-4 flex-shrink-0"><Search className="w-16 h-16 text-rose-500 mx-auto mb-2 opacity-50"/> <h2 className="text-2xl font-bold">Keşfet & Eşleş</h2></div>
+              <form onSubmit={handleSearchPartner} className="flex gap-2 mb-6 flex-shrink-0">
+                <input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Kullanıcı adı ara..." className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm" />
+                <button type="submit" className="bg-rose-500 text-white p-3 rounded-xl"><Search className="w-5 h-5"/></button>
+              </form>
+              <div className="space-y-3 flex-shrink-0">
+                {searchResults.map(result => (
+                  <div key={result.username} className="bg-white p-4 rounded-2xl flex items-center justify-between shadow-sm border border-slate-100">
+                    <div className="flex items-center gap-3"><div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-bold uppercase">{result.username.charAt(0)}</div><span className="font-bold text-slate-700">@{result.username}</span></div>
+                    {userProfile.sentRequests?.includes(result.username) ? <button disabled className="bg-slate-100 text-slate-400 text-xs font-bold px-3 py-2 rounded-full"><Check className="w-3 h-3 inline"/> İstek Gitti</button> : <button onClick={()=>RelationshipService.sendRequest(userProfile.username, result.username)} className="bg-rose-500 text-white text-xs font-bold px-3 py-2 rounded-full hover:bg-rose-600"><UserPlus className="w-3 h-3 inline"/> İstek At</button>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
+          const renderRequestsView = () => (
+            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24">
+              <h2 className="text-xl font-bold mb-6 flex items-center flex-shrink-0"><Bell className="w-5 h-5 mr-2 text-rose-500"/> Gelen İstekler</h2>
+              {userProfile.pendingRequests?.map(req => (
+                <div key={req} className="bg-white p-5 rounded-2xl shadow-sm text-center mb-4">
+                  <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center text-2xl uppercase mx-auto mb-3">{req.charAt(0)}</div>
+                  <p className="font-bold mb-4">@{req}</p>
+                  <div className="flex space-x-2">
+                    <button onClick={()=>RelationshipService.rejectRequest(userProfile.username, req)} className="flex-1 bg-slate-100 py-2 rounded-xl text-sm font-bold text-slate-600">Reddet</button>
+                    <button onClick={()=>RelationshipService.acceptRequest(userProfile.username, req)} className="flex-1 bg-rose-500 py-2 rounded-xl text-sm font-bold text-white">Kabul Et</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+
+          const renderHomeView = () => (
+            <div className="flex flex-col items-center h-full space-y-6 p-6 animate-in fade-in bg-white overflow-y-auto pb-24">
+              <div className="text-center flex flex-col items-center mt-4"><AppLogo className="w-32 h-32" /><p className="text-slate-500 text-sm mt-2">Partnerin <span className="font-bold text-rose-500">@{partnerProfile?.username}</span> ile bağın.</p></div>
+              <div className="flex-1 flex items-center justify-center relative w-full py-10">
+                <div className={`absolute w-64 h-64 bg-rose-200 rounded-full mix-blend-multiply blur-2xl opacity-60 ${isGeneratingMemory ? 'animate-ping' : 'animate-pulse'}`}></div>
+                <button onClick={handleMissYouGenerate} disabled={isGeneratingMemory} className={`relative z-10 w-48 h-48 rounded-full flex flex-col items-center justify-center text-white shadow-2xl transition-all ${isGeneratingMemory ? 'bg-rose-600 scale-95' : 'bg-gradient-to-tr from-rose-500 to-pink-500 hover:scale-105'}`}>
+                  {isGeneratingMemory ? <><Loader2 className="w-12 h-12 animate-spin mb-2 mx-auto" /><span className="font-semibold text-sm block">Üretiliyor...</span></> : <><Heart className="w-16 h-16 mb-2 fill-white animate-pulse mx-auto" /><span className="font-bold text-xl block">ÖZLEDİM</span></>}
+                </button>
+              </div>
+              <div className="w-full bg-slate-50 p-5 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center"><Activity className="w-4 h-4 mr-2 text-rose-500"/> Biyometrik Analiz (Canlı)</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col items-center"><Heart className="w-6 h-6 text-rose-500 mb-1 fill-rose-500 animate-pulse"/><span className="text-2xl font-bold text-slate-800">78</span><span className="text-xs text-slate-500">Senin Nabzın</span></div>
+                  <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col items-center"><Brain className="w-6 h-6 text-indigo-500 mb-1"/><span className="text-2xl font-bold text-slate-800">%85</span><span className="text-xs text-slate-500">Mutluluk Endeksi</span></div>
+                </div>
+              </div>
+            </div>
+          );
+
+          const renderJourneyView = () => (
+            <div className="flex flex-col h-full bg-slate-50 animate-in slide-in-from-right pb-24">
+              <div className="p-4 bg-white shadow-sm z-10 flex space-x-2">
+                <button onClick={()=>setJourneyTab('timeline')} className={`flex-1 py-2 rounded-full text-xs font-bold flex items-center justify-center ${journeyTab==='timeline'?'bg-rose-500 text-white':'bg-slate-100 text-slate-600'}`}><Clock className="w-3 h-3 mr-1"/> Anılar</button>
+                <button onClick={()=>setJourneyTab('board')} className={`flex-1 py-2 rounded-full text-xs font-bold flex items-center justify-center ${journeyTab==='board'?'bg-rose-500 text-white':'bg-slate-100 text-slate-600'}`}><KanbanSquare className="w-3 h-3 mr-1"/> Hedefler</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                {journeyTab === 'timeline' && (
+                  <div className="space-y-6">
+                    {memories.map(memory => (
+                      <div key={memory.id} className="bg-white rounded-3xl shadow-sm overflow-hidden">
+                        <div className="h-40 relative"><img src={memory.imageUrl} className="w-full h-full object-cover" /><div className="absolute top-3 left-3 bg-white/90 px-2 py-1 rounded-full text-[10px] font-bold shadow flex items-center"><Clock className="w-3 h-3 mr-1"/> {new Date(memory.ts).toLocaleDateString()}</div></div>
+                        <div className="p-4"><p className="text-sm italic text-slate-700">"{memory.text}"</p></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {journeyTab === 'board' && (
+                  <div className="grid grid-cols-2 gap-4 h-full">
+                    <div className="bg-slate-200/50 rounded-2xl p-3"><h3 className="font-bold text-xs mb-3 text-slate-600">HAYALLERİMİZ</h3><div className="bg-white p-3 rounded-xl shadow-sm mb-2 text-xs border-l-4 border-rose-500">Kapadokya Balon Turu</div></div>
+                    <div className="bg-green-100/50 rounded-2xl p-3"><h3 className="font-bold text-xs mb-3 text-green-700">TAMAMLANANLAR</h3><div className="bg-white p-3 rounded-xl shadow-sm mb-2 text-xs border-l-4 border-green-500 opacity-60 line-through">İlk Buluşma</div></div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+
+          const renderVrView = () => (
+            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24 relative">
+              {showPhotoModal && (
+                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                  <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-[90%] overflow-y-auto">
+                    <button onClick={() => setShowPhotoModal(false)} className="absolute top-4 right-4 text-slate-400"><X className="w-5 h-5" /></button>
+                    <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center"><ImagePlus className="w-5 h-5 mr-2 text-rose-500" /> Sürpriz Fotoğraf</h2>
+                    {!photoPreviewUrl ? (
+                      <>
+                        <div className="flex bg-slate-100 p-1 rounded-xl mb-4"><button onClick={() => setPhotoMode('gallery')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${photoMode === 'gallery' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500'}`}>Galeriden</button><button onClick={() => setPhotoMode('ai')} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center ${photoMode === 'ai' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}><Wand2 className="w-4 h-4 mr-1"/> Yapay Zeka</button></div>
+                        {photoMode === 'gallery' ? (
+                          <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-2xl p-8 bg-slate-50 relative"><input type="file" accept="image/*" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /><Upload className="w-10 h-10 text-slate-400 mb-3" /><p className="text-sm font-bold text-slate-600">Fotoğraf Seç</p></div>
+                        ) : (
+                          <div className="flex flex-col"><textarea value={aiPhotoPrompt} onChange={e => setAiPhotoPrompt(e.target.value)} placeholder="Örn: Eyfel kulesi..." className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm min-h-[100px] resize-none mb-3"></textarea><button onClick={handleAiGeneratePhoto} disabled={!aiPhotoPrompt.trim() || isGeneratingPhoto} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded-xl flex items-center justify-center">{isGeneratingPhoto ? <Loader2 className="w-5 h-5 animate-spin mr-2"/> : 'Oluştur'}</button></div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center"><div className="w-full rounded-2xl overflow-hidden mb-4 relative"><img src={photoPreviewUrl} className="w-full max-h-[300px] object-contain" /><button onClick={() => setPhotoPreviewUrl(null)} className="absolute top-2 right-2 bg-black/50 text-white p-2 rounded-full"><X className="w-4 h-4"/></button></div><button onClick={handleSendPhotoSurprise} className="w-full bg-rose-500 text-white font-bold py-3 rounded-xl w-full">Baskıya Gönder</button></div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeVrRoom && (
+                <div className="absolute inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center text-white"><Sparkles className="w-16 h-16 text-indigo-400 mb-4 animate-spin-slow"/><h2 className="text-2xl font-bold mb-2">Sanal Oda</h2><button onClick={()=>setActiveVrRoom(null)} className="px-6 py-2 bg-rose-600 rounded-full font-bold">Odadan Çık</button></div>
+              )}
+
+              <h2 className="text-xl font-bold mb-6 flex items-center"><Sparkles className="w-5 h-5 mr-2 text-indigo-500"/> VR/AR Odaları</h2>
+              <div className="grid grid-cols-1 gap-4 mb-8">
+                <div onClick={()=>setActiveVrRoom('balloon')} className="bg-indigo-600 p-5 rounded-3xl text-white shadow-lg cursor-pointer"><h3 className="font-bold text-lg">Balon Turu Odası</h3></div>
+              </div>
+              <h2 className="text-xl font-bold mb-4 flex items-center"><Coffee className="w-5 h-5 mr-2 text-rose-500"/> Hibrit Fiziksel Sürprizler</h2>
+              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 text-center">
+                <div className="flex gap-2 w-full"><button onClick={()=>handleSendPhysicalGift('Filtre Kahve ☕️')} className="flex-1 bg-slate-100 py-3 rounded-xl text-xs font-bold w-full">Kahve Ismarla</button><button onClick={()=>setShowPhotoModal(true)} className="flex-1 bg-rose-50 text-rose-600 py-3 rounded-xl text-xs font-bold w-full flex items-center justify-center"><ImagePlus className="w-4 h-4 inline mr-1"/> Fotoğraf Yolla</button></div>
+              </div>
+            </div>
+          );
+
+          const renderChatView = () => (
+            <div className="flex flex-col h-full bg-slate-50 relative pb-20">
+              <div className="bg-white p-3 border-b border-slate-200 flex items-center justify-between shadow-sm z-10 flex-shrink-0">
+                <div className="flex items-center"><div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mr-3 font-bold uppercase">{partnerProfile?.username?.charAt(0)}</div><div><h2 className="text-md font-bold leading-tight">{partnerProfile?.fullName || `@${partnerProfile?.username}`}</h2><span className="text-[10px] text-green-600">Çevrimiçi</span></div></div>
+                <div className="flex gap-2"><button onClick={handleAiMediation} className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center"><Brain className="w-4 h-4" /></button><button onClick={() => setIsCalling(true)} className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center"><Phone className="w-4 h-4" /></button></div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {chatMessages.map((msg) => {
+                  if (msg.isSystem) return <div key={msg.id} className="w-full text-center text-xs font-bold text-slate-500 bg-slate-200/50 p-2 rounded-lg">{msg.text}</div>
+                  const isMe = msg.senderId === userProfile.username;
+                  return (
+                    <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[80%] rounded-2xl p-3 text-sm shadow-sm flex flex-col ${isMe ? 'bg-rose-500 text-white rounded-br-none' : 'bg-white border text-slate-700 rounded-bl-none'}`}>
+                        {msg.imageUrl && <img src={msg.imageUrl} className="w-full rounded-xl mb-2 max-h-48 object-cover" />}
+                        <span>{msg.text}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={chatEndRef} />
+              </div>
+              <div className="bg-white border-t border-slate-200 p-3 flex-shrink-0">
+                <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
+                  <input type="text" value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder="Mesaj yaz..." className="flex-1 bg-slate-100 rounded-full px-4 py-3 text-sm outline-none" />
+                  <button type="submit" disabled={!chatInput.trim()} className="w-12 h-12 bg-rose-500 rounded-full flex items-center justify-center text-white"><Send className="w-5 h-5 ml-1" /></button>
+                </form>
+              </div>
+            </div>
+          );
+
+          const renderProfileView = () => (
+            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24">
+              <div className="flex justify-between items-center mb-6 flex-shrink-0"><h2 className="text-xl font-bold">Profil</h2><button onClick={handleLogout} className="text-slate-500 text-sm font-medium flex items-center">Çıkış <LogOut className="w-4 h-4 ml-1"/></button></div>
+              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex flex-col mb-6 relative overflow-hidden flex-shrink-0">
+                <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-rose-400 to-indigo-500 z-0"></div>
+                <div className="flex flex-col items-center relative z-10 mt-4 mb-4">
+                  <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center border-4 border-white shadow-lg text-4xl uppercase font-bold text-slate-300 mb-3">{userProfile?.username?.charAt(0)}</div>
+                  {!isEditingProfile ? (
+                    <div className="text-center w-full">
+                      <h3 className="text-2xl font-bold">{userProfile?.fullName || `@${userProfile?.username}`}</h3>
+                      {userProfile?.fullName && <p className="text-rose-500 font-medium text-sm mb-1">@{userProfile?.username}</p>}
+                      <div className="flex flex-wrap justify-center gap-2 mt-2 mb-4"><div className="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full flex items-center"><Brain className="w-3 h-3 mr-1"/> {userProfile?.mbti || 'ENTP'}</div></div>
+                      <button onClick={() => { setIsEditingProfile(true); setProfileForm({fullName: userProfile.fullName||'', age: userProfile.age||'', gender: userProfile.gender||''}); }} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center"><Edit2 className="w-4 h-4 mr-2" /> Profili Düzenle</button>
+                    </div>
+                  ) : (
+                    <form onSubmit={async (e) => { e.preventDefault(); await UserService.updateProfile(userProfile.username, profileForm); setIsEditingProfile(false); }} className="w-full mt-4 space-y-3 bg-white p-4 rounded-2xl shadow-sm border">
+                      <div><label className="block text-xs font-semibold text-slate-600 mb-1">Ad Soyad</label><input type="text" value={profileForm.fullName} onChange={e => setProfileForm({...profileForm, fullName: e.target.value})} className="w-full bg-slate-50 rounded-lg px-3 py-2 text-sm border outline-none" /></div>
+                      <div className="flex gap-2 pt-2"><button type="button" onClick={() => setIsEditingProfile(false)} className="flex-1 py-2 bg-slate-100 rounded-lg text-sm font-bold">İptal</button><button type="submit" className="flex-1 py-2 bg-rose-500 text-white rounded-lg text-sm font-bold">Kaydet</button></div>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-3 flex-shrink-0">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between"><span className="text-sm font-bold">Profil Görünürlüğü</span><button onClick={async () => await UserService.updateProfile(userProfile.username, {isPublic: !userProfile.isPublic})} className={`w-10 h-10 rounded-full flex items-center justify-center ${userProfile?.isPublic ? 'bg-green-100 text-green-600' : 'bg-slate-200 text-slate-500'}`}>{userProfile?.isPublic ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}</button></div>
+                {userProfile?.partnerId && <div className="bg-white p-4 rounded-xl border border-rose-100 flex items-center justify-between mt-4"><span className="text-sm font-bold text-rose-500">Bağlantıyı Kopar</span><button onClick={()=>RelationshipService.disconnect(userProfile.username, partnerProfile?.username)} className="text-xs bg-rose-50 text-rose-600 border px-3 py-1 rounded-full font-bold">Ayrıl</button></div>}
+              </div>
+            </div>
+          );
+
+          return (
+            <div className="min-h-[100dvh] w-full flex items-center justify-center font-sans text-slate-900 bg-slate-200">
+              <div className="w-full max-w-2xl h-[100dvh] bg-white md:shadow-2xl overflow-hidden relative flex flex-col">
+                {isCalling && <div className="absolute inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center text-white p-6 animate-in fade-in"><h2 className="text-3xl font-bold mb-2">@{partnerProfile?.username}</h2><p className="text-slate-400 mb-16">Aranıyor...</p><button onClick={()=>setIsCalling(false)} className="w-16 h-16 bg-rose-600 rounded-full flex items-center justify-center"><PhoneOff className="w-8 h-8" /></button></div>}
+
+                <div className="flex-1 min-h-0 relative flex flex-col">
+                  {!userProfile.partnerId ? (
+                    <>{activeTab === 'home' && renderDiscoverView()}{activeTab === 'requests' && renderRequestsView()}{activeTab === 'profile' && renderProfileView()}{(activeTab === 'journey' || activeTab === 'vr' || activeTab === 'chat') && renderDiscoverView()}</>
+                  ) : (
+                    <>{activeTab === 'home' && renderHomeView()}{activeTab === 'journey' && renderJourneyView()}{activeTab === 'vr' && renderVrView()}{activeTab === 'chat' && renderChatView()}{activeTab === 'profile' && renderProfileView()}</>
+                  )}
+                </div>
+
+                <div className="w-full bg-white border-t border-slate-200 flex items-center justify-around px-2 pb-6 md:pb-4 pt-2 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-40 flex-shrink-0">
+                  {!userProfile.partnerId ? (
+                    <>
+                      <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'home' ? 'text-rose-500' : 'text-slate-400'}`}><Search className={`w-6 h-6 mb-1 ${activeTab==='home'?'scale-110':''}`} /><span className="text-[10px] font-medium">Keşfet</span></button>
+                      <button onClick={()=>setActiveTab('requests')} className={`flex flex-col items-center justify-center w-20 h-full relative ${activeTab === 'requests' ? 'text-rose-500' : 'text-slate-400'}`}><Bell className={`w-6 h-6 mb-1 ${activeTab==='requests'?'scale-110':''}`} />{userProfile.pendingRequests?.length > 0 && <span className="absolute top-0 right-4 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{userProfile.pendingRequests.length}</span>}<span className="text-[10px] font-medium">İstekler</span></button>
+                      <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px] font-medium">Profil</span></button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'home' ? 'text-rose-500' : 'text-slate-400'}`}><Heart className={`w-6 h-6 mb-1 ${activeTab==='home'?'fill-rose-500 scale-110':''}`} /><span className="text-[10px]">Özledim</span></button>
+                      <button onClick={()=>setActiveTab('journey')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'journey' ? 'text-rose-500' : 'text-slate-400'}`}><Map className={`w-6 h-6 mb-1 ${activeTab==='journey'?'scale-110':''}`} /><span className="text-[10px]">Rota</span></button>
+                      <button onClick={()=>setActiveTab('vr')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'vr' ? 'text-indigo-500' : 'text-slate-400'}`}><Gamepad2 className={`w-6 h-6 mb-1 ${activeTab==='vr'?'scale-110':''}`} /><span className="text-[10px]">Sürpriz</span></button>
+                      <button onClick={()=>setActiveTab('chat')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'chat' ? 'text-rose-500' : 'text-slate-400'}`}><MessageCircle className={`w-6 h-6 mb-1 ${activeTab==='chat'?'scale-110':''}`} /><span className="text-[10px]">Sohbet</span></button>
+                      <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px]">Profil</span></button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // Uygulamayı HTML içerisine render et
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
