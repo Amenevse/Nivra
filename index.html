@@ -46,10 +46,19 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'kevsapp-prod';
         let app, auth, db;
 
+        // LÜTFEN DİKKAT: GitHub Pages üzerinde çalışması için buradaki tırnak içindeki bilgileri 
+        // kendi Firebase (console.firebase.google.com) projenizden alıp doldurmalısınız!
+        const myFirebaseConfig = {
+          apiKey: "SİZİN_API_KEY_BURAYA",
+          authDomain: "SİZİN_AUTH_DOMAIN_BURAYA",
+          projectId: "SİZİN_PROJECT_ID_BURAYA",
+          storageBucket: "SİZİN_STORAGE_BUCKET_BURAYA",
+          messagingSenderId: "SİZİN_SENDER_ID_BURAYA",
+          appId: "SİZİN_APP_ID_BURAYA"
+        };
+
         try {
-          // Firebase bilgilerinizi kendi sunucunuzda kullanırken buraya manuel girebilirsiniz:
-          // const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "..." };
-          const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+          const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : (myFirebaseConfig.apiKey !== "SİZİN_API_KEY_BURAYA" ? myFirebaseConfig : null);
           if (firebaseConfig) {
             app = initializeApp(firebaseConfig);
             auth = getAuth(app);
@@ -232,7 +241,11 @@
           const chatEndRef = useRef(null);
 
           useEffect(() => {
-            if (!auth) return;
+            if (!auth) {
+                // Firebase ayarları girilmediği için sonsuz döngüyü kırıyoruz
+                setIsProfileLoading(false);
+                return;
+            }
             const initAuth = async () => {
               try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
@@ -396,9 +409,25 @@
             alert(`${item} başarıyla gönderildi.`);
           };
 
-          if (!user || isProfileLoading) return <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans"><AppLogo className="w-32 h-32 animate-pulse" /></div>;
+          // EĞER FIREBASE AYARLARI YAPILMAMIŞSA BU UYARI EKRANI ÇIKAR
+          if (!auth) {
+            return (
+              <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans p-4 text-slate-900">
+                 <div className="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl text-center">
+                   <AppLogo className="w-24 h-24 mx-auto mb-6" />
+                   <h2 className="text-xl font-bold mb-2">Bağlantı Gerekli ⚠️</h2>
+                   <p className="text-sm text-slate-600 mb-6">Uygulamanın GitHub üzerinde tam çalışabilmesi için veritabanı ayarlarının yapılması gerekiyor.</p>
+                   <div className="bg-rose-50 text-rose-600 text-xs p-4 rounded-xl text-left border border-rose-100">
+                     <strong>index.html</strong> dosyasını bir kod editörüyle açın ve <code>myFirebaseConfig</code> kısmına kendi Firebase projenizin bilgilerini (apiKey, projectId vb.) yapıştırın.
+                   </div>
+                 </div>
+              </div>
+            );
+          }
 
-          if (user && !userProfile) {
+          if (isProfileLoading) return <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans"><AppLogo className="w-32 h-32 animate-pulse" /></div>;
+
+          if (!user || !userProfile) {
             return (
               <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center p-4 md:p-8 font-sans text-slate-900">
                 <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
@@ -620,7 +649,7 @@
                 {isCalling && <div className="absolute inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center text-white p-6 animate-in fade-in"><h2 className="text-3xl font-bold mb-2">@{partnerProfile?.username}</h2><p className="text-slate-400 mb-16">Aranıyor...</p><button onClick={()=>setIsCalling(false)} className="w-16 h-16 bg-rose-600 rounded-full flex items-center justify-center"><PhoneOff className="w-8 h-8" /></button></div>}
 
                 <div className="flex-1 min-h-0 relative flex flex-col">
-                  {!userProfile.partnerId ? (
+                  {!userProfile?.partnerId ? (
                     <>{activeTab === 'home' && renderDiscoverView()}{activeTab === 'requests' && renderRequestsView()}{activeTab === 'profile' && renderProfileView()}{(activeTab === 'journey' || activeTab === 'vr' || activeTab === 'chat') && renderDiscoverView()}</>
                   ) : (
                     <>{activeTab === 'home' && renderHomeView()}{activeTab === 'journey' && renderJourneyView()}{activeTab === 'vr' && renderVrView()}{activeTab === 'chat' && renderChatView()}{activeTab === 'profile' && renderProfileView()}</>
@@ -628,10 +657,10 @@
                 </div>
 
                 <div className="w-full bg-white border-t border-slate-200 flex items-center justify-around px-2 pb-6 md:pb-4 pt-2 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-40 flex-shrink-0">
-                  {!userProfile.partnerId ? (
+                  {!userProfile?.partnerId ? (
                     <>
                       <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'home' ? 'text-rose-500' : 'text-slate-400'}`}><Search className={`w-6 h-6 mb-1 ${activeTab==='home'?'scale-110':''}`} /><span className="text-[10px] font-medium">Keşfet</span></button>
-                      <button onClick={()=>setActiveTab('requests')} className={`flex flex-col items-center justify-center w-20 h-full relative ${activeTab === 'requests' ? 'text-rose-500' : 'text-slate-400'}`}><Bell className={`w-6 h-6 mb-1 ${activeTab==='requests'?'scale-110':''}`} />{userProfile.pendingRequests?.length > 0 && <span className="absolute top-0 right-4 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{userProfile.pendingRequests.length}</span>}<span className="text-[10px] font-medium">İstekler</span></button>
+                      <button onClick={()=>setActiveTab('requests')} className={`flex flex-col items-center justify-center w-20 h-full relative ${activeTab === 'requests' ? 'text-rose-500' : 'text-slate-400'}`}><Bell className={`w-6 h-6 mb-1 ${activeTab==='requests'?'scale-110':''}`} />{userProfile?.pendingRequests?.length > 0 && <span className="absolute top-0 right-4 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{userProfile.pendingRequests.length}</span>}<span className="text-[10px] font-medium">İstekler</span></button>
                       <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px] font-medium">Profil</span></button>
                     </>
                   ) : (
