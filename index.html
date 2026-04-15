@@ -34,7 +34,7 @@
         import React, { useState, useEffect, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
-          Heart, Clock, MessageCircle, User, MapPin, CloudSun, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, KanbanSquare, Sparkles, Coffee, ImagePlus, Wand2, Brain, Image as ImageIcon, Edit2, Upload, Smile
+          Heart, Clock, MessageCircle, User, MapPin, CloudSun, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, KanbanSquare, Sparkles, Coffee, ImagePlus, Wand2, Brain, Image as ImageIcon, Edit2, Upload, Smile, Gamepad2
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInWithCustomToken, signInAnonymously, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -44,10 +44,7 @@
         // 1. CONFIG & ENVIRONMENT
         // ==========================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'kevsapp-prod';
-        let app, auth, db;
-
-        // LÜTFEN DİKKAT: GitHub Pages üzerinde çalışması için buradaki tırnak içindeki bilgileri 
-        // kendi Firebase (console.firebase.google.com) projenizden alıp doldurmalısınız!
+        
         const myFirebaseConfig = {
           apiKey: "AIzaSyD5yc_wsokPjXJPMO6TSr3jZeOUTSDIdeM",
           authDomain: "kevsapp-23237.firebaseapp.com",
@@ -58,15 +55,15 @@
           measurementId: "G-009XP1S5H8"
         };
 
+        let app, auth, db, initErrorMsg = null;
+
         try {
-          const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : (myFirebaseConfig.apiKey !== "SİZİN_API_KEY_BURAYA" ? myFirebaseConfig : null);
-          if (firebaseConfig) {
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-          }
+          app = initializeApp(myFirebaseConfig);
+          auth = getAuth(app);
+          db = getFirestore(app);
         } catch (error) {
           console.error("Firebase Core Initialization Error:", error);
+          initErrorMsg = error.message;
         }
 
         // ==========================================
@@ -243,7 +240,6 @@
 
           useEffect(() => {
             if (!auth) {
-                // Firebase ayarları girilmediği için sonsuz döngüyü kırıyoruz
                 setIsProfileLoading(false);
                 return;
             }
@@ -410,16 +406,15 @@
             alert(`${item} başarıyla gönderildi.`);
           };
 
-          // EĞER FIREBASE AYARLARI YAPILMAMIŞSA BU UYARI EKRANI ÇIKAR
-          if (!auth) {
+          if (initErrorMsg) {
             return (
               <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans p-4 text-slate-900">
                  <div className="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl text-center">
                    <AppLogo className="w-24 h-24 mx-auto mb-6" />
-                   <h2 className="text-xl font-bold mb-2">Bağlantı Gerekli ⚠️</h2>
-                   <p className="text-sm text-slate-600 mb-6">Uygulamanın GitHub üzerinde tam çalışabilmesi için veritabanı ayarlarının yapılması gerekiyor.</p>
-                   <div className="bg-rose-50 text-rose-600 text-xs p-4 rounded-xl text-left border border-rose-100">
-                     <strong>index.html</strong> dosyasını bir kod editörüyle açın ve <code>myFirebaseConfig</code> kısmına kendi Firebase projenizin bilgilerini (apiKey, projectId vb.) yapıştırın.
+                   <h2 className="text-xl font-bold mb-2 text-rose-600">Veritabanı Hatası ⚠️</h2>
+                   <p className="text-sm text-slate-600 mb-6">Firebase bağlanırken bir hata oluştu. Lütfen bilgilerinizi kontrol edin.</p>
+                   <div className="bg-rose-50 text-rose-600 text-xs p-4 rounded-xl text-left border border-rose-100 break-words">
+                     {initErrorMsg}
                    </div>
                  </div>
               </div>
@@ -431,7 +426,6 @@
           if (!user || !userProfile) {
             return (
               <div className="min-h-[100dvh] bg-slate-50 flex flex-col items-center justify-center p-4 md:p-8 font-sans text-slate-900 relative overflow-hidden">
-                {/* Arkaplan süslemeleri */}
                 <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-rose-200 rounded-full mix-blend-multiply blur-3xl opacity-30 animate-pulse"></div>
                 <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-indigo-200 rounded-full mix-blend-multiply blur-3xl opacity-30 animate-pulse delay-1000"></div>
 
