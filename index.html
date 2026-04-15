@@ -34,7 +34,7 @@
         import React, { useState, useEffect, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
-          Heart, Clock, MessageCircle, User, MapPin, CloudSun, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, KanbanSquare, Sparkles, Coffee, ImagePlus, Wand2, Brain, Image as ImageIcon, Edit2, Upload, Smile, Gamepad2
+          Heart, Clock, MessageCircle, User, MapPin, CloudSun, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, KanbanSquare, Sparkles, Coffee, ImagePlus, Wand2, Brain, Image as ImageIcon, Edit2, Upload, Smile
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInWithCustomToken, signInAnonymously, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -49,12 +49,13 @@
         // LÜTFEN DİKKAT: GitHub Pages üzerinde çalışması için buradaki tırnak içindeki bilgileri 
         // kendi Firebase (console.firebase.google.com) projenizden alıp doldurmalısınız!
         const myFirebaseConfig = {
-          apiKey: "SİZİN_API_KEY_BURAYA",
-          authDomain: "SİZİN_AUTH_DOMAIN_BURAYA",
-          projectId: "SİZİN_PROJECT_ID_BURAYA",
-          storageBucket: "SİZİN_STORAGE_BUCKET_BURAYA",
-          messagingSenderId: "SİZİN_SENDER_ID_BURAYA",
-          appId: "SİZİN_APP_ID_BURAYA"
+          apiKey: "AIzaSyD5yc_wsokPjXJPMO6TSr3jZeOUTSDIdeM",
+          authDomain: "kevsapp-23237.firebaseapp.com",
+          projectId: "kevsapp-23237",
+          storageBucket: "kevsapp-23237.firebasestorage.app",
+          messagingSenderId: "1060466667832",
+          appId: "1:1060466667832:web:58dfccf35a7573255311cd",
+          measurementId: "G-009XP1S5H8"
         };
 
         try {
@@ -429,17 +430,43 @@
 
           if (!user || !userProfile) {
             return (
-              <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center p-4 md:p-8 font-sans text-slate-900">
-                <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
-                  <div className="flex justify-center mb-2"><AppLogo className="w-48 h-48" /></div>
+              <div className="min-h-[100dvh] bg-slate-50 flex flex-col items-center justify-center p-4 md:p-8 font-sans text-slate-900 relative overflow-hidden">
+                {/* Arkaplan süslemeleri */}
+                <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-rose-200 rounded-full mix-blend-multiply blur-3xl opacity-30 animate-pulse"></div>
+                <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-indigo-200 rounded-full mix-blend-multiply blur-3xl opacity-30 animate-pulse delay-1000"></div>
+
+                <div className="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 border border-white relative z-10">
+                  <div className="flex flex-col items-center justify-center mb-6">
+                    <AppLogo className="w-40 h-40 drop-shadow-sm" />
+                    <h1 className="text-2xl font-bold mt-3 text-slate-800">Hoş Geldiniz</h1>
+                    <p className="text-sm text-slate-500 text-center mt-1">İlişkiniz için yapay zeka destekli özel alanınız.</p>
+                  </div>
                   <form onSubmit={handleAuthSubmit} className="space-y-4">
-                    {authMode === 'register' && <div><label className="block text-xs font-semibold text-slate-600 mb-1">E-Posta</label><input type="email" required value={emailInput} onChange={e=>setEmailInput(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-rose-500 outline-none" /></div>}
-                    <div><label className="block text-xs font-semibold text-slate-600 mb-1">Kullanıcı Adı</label><input type="text" required value={usernameInput} onChange={e=>setUsernameInput(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-rose-500 outline-none" /></div>
-                    <div><label className="block text-xs font-semibold text-slate-600 mb-1">Şifre</label><input type="password" required value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-rose-500 outline-none" /></div>
-                    {authError && <p className="text-rose-500 text-xs text-center bg-rose-50 p-2 rounded">{authError}</p>}
-                    <button disabled={isAuthLoading} className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-xl flex items-center justify-center w-full">{isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (authMode==='login'?'Giriş Yap':'Kayıt Ol')}</button>
+                    {authMode === 'register' && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1 ml-1">E-Posta</label>
+                        <input type="email" required value={emailInput} onChange={e=>setEmailInput(e.target.value)} className="w-full bg-slate-50/50 rounded-2xl px-4 py-3 text-sm border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all" placeholder="ornek@mail.com" />
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1 ml-1">Kullanıcı Adı</label>
+                      <input type="text" required value={usernameInput} onChange={e=>setUsernameInput(e.target.value)} className="w-full bg-slate-50/50 rounded-2xl px-4 py-3 text-sm border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all" placeholder="Kullanıcı adınız" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1 ml-1">Şifre</label>
+                      <input type="password" required value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} className="w-full bg-slate-50/50 rounded-2xl px-4 py-3 text-sm border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all" placeholder="••••••••" />
+                    </div>
+                    {authError && <p className="text-rose-500 text-xs text-center bg-rose-50 p-3 rounded-xl border border-rose-100 font-medium animate-in fade-in">{authError}</p>}
+                    <button disabled={isAuthLoading} className="w-full bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center transition-all shadow-lg shadow-rose-500/30 hover:shadow-rose-500/50 mt-2">
+                      {isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (authMode === 'login' ? 'Giriş Yap' : 'Kayıt Ol')}
+                    </button>
                   </form>
-                  <div className="mt-4 text-center"><button onClick={()=>{setAuthMode(authMode==='login'?'register':'login');setAuthError('');}} className="text-sm text-slate-500 hover:text-rose-500">{authMode==='login'?'Hesabın yok mu? Kayıt Ol':'Hesabın var mı? Giriş Yap'}</button></div>
+                  <div className="mt-6 text-center">
+                    <button onClick={()=>{setAuthMode(authMode==='login'?'register':'login');setAuthError('');}} className="text-sm font-medium text-slate-500 hover:text-rose-600 transition-colors">
+                      {authMode === 'login' ? 'Hesabınız yok mu? ' : 'Zaten hesabınız var mı? '}
+                      <span className="font-bold underline decoration-2 underline-offset-4">{authMode === 'login' ? 'Kayıt Olun' : 'Giriş Yapın'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -571,8 +598,7 @@
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {chatMessages.map((msg) => {
-                  // Düzeltildi: msg.isSystem yerine msg.type === 'system' kontrolü
-                  if (msg.type === 'system') return <div key={msg.id} className="w-full text-center text-xs font-bold text-slate-500 bg-slate-200/50 p-2 rounded-lg">{msg.text}</div>
+                  if (msg.isSystem) return <div key={msg.id} className="w-full text-center text-xs font-bold text-slate-500 bg-slate-200/50 p-2 rounded-lg">{msg.text}</div>
                   const isMe = msg.senderId === userProfile.username;
                   return (
                     <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
