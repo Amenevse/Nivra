@@ -241,7 +241,7 @@
           // Yana kaydırma (Swipe to Reveal Time) state'leri
           const [chatSwipeOffset, setChatSwipeOffset] = useState(0);
           const [touchStartX, setTouchStartX] = useState(null);
-          const [touchStartY, setTouchStartY] = useState(null);
+          const [isDragging, setIsDragging] = useState(false);
 
           const customEmojis = ['💖', '🧸', '💌', '💍', '🥂', '👩‍❤️‍👨', '🥺', '🦋', '🔥', '✨', '🌹', '🍓', '🔒', '💘', '🎁'];
           const chatEndRef = useRef(null);
@@ -360,10 +360,12 @@
               const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
               
               await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, aiText, imageUrl, context);
-              await MessageService.sendMessage(userProfile.relationshipId, 'SYSTEM', `[BİLDİRİM] @${userProfile.username} 'Özledim' butonuna tıkladı! Seni çok özlediğini bilmeni istiyor. 💖`, 'system');
+              
+              // BİLDİRİM YERİNE KULLANICININ AĞZINDAN SOHBETE MESAJ OLARAK GÖNDER
+              await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, aiText, 'text');
 
-              setActiveTab('journey'); setJourneyTab('timeline');
-              alert("Partnerinize onu özlediğinize dair bildirim başarıyla gönderildi!");
+              setActiveTab('home'); // Rota yerine ana ekranda kal
+              alert("Partnerine onu özlediğini belirten mesaj gönderildi!");
             } catch (e) { console.error(e); alert("Hata oluştu. İnternet bağlantınızı kontrol edin."); }
             finally { setIsGeneratingMemory(false); }
           };
@@ -463,24 +465,21 @@
             return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
           };
 
-          // SOHBET KAYDIRMA (SWIPE) İŞLEMLERİ
-          const handleChatTouchStart = (e) => {
-            setTouchStartX(e.touches[0].clientX);
-            setTouchStartY(e.touches[0].clientY);
+          // SOHBET KAYDIRMA (SWIPE) İŞLEMLERİ (Touch + Mouse)
+          const handleChatPointerDown = (clientX) => {
+            setIsDragging(true);
+            setTouchStartX(clientX);
           };
-          const handleChatTouchMove = (e) => {
-            if (touchStartX === null || touchStartY === null) return;
-            const deltaX = e.touches[0].clientX - touchStartX;
-            const deltaY = e.touches[0].clientY - touchStartY;
-            // Sadece yatay kaydırmayı dikkate al (Dikey scrollu bozmamak için)
-            if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < 0 && deltaX > -60) {
+          const handleChatPointerMove = (clientX) => {
+            if (!isDragging || touchStartX === null) return;
+            const deltaX = clientX - touchStartX;
+            if (deltaX < 0 && deltaX > -80) {
                 setChatSwipeOffset(deltaX);
             }
           };
-          const handleChatTouchEnd = () => {
+          const handleChatPointerUp = () => {
+            setIsDragging(false);
             setTouchStartX(null);
-            setTouchStartY(null);
-            // Kaydırma bitince mesajları eski yerine animasyonla döndür
             setChatSwipeOffset(0);
           };
 
@@ -566,9 +565,23 @@
             </div>
           );
 
-          const renderHomeView = () => (
+          const renderHomeView = () => {
+            const latestPartnerMemory = memories.find(m => m.senderId === partnerProfile?.username);
+            return (
             <div className="flex flex-col items-center h-full space-y-6 p-6 animate-in fade-in bg-white overflow-y-auto pb-24">
               <div className="text-center flex flex-col items-center mt-4"><AppLogo className="w-32 h-32" /><p className="text-slate-500 text-sm mt-2">Partnerin <span className="font-bold text-rose-500">@{partnerProfile?.username}</span> ile bağın.</p></div>
+              
+              {/* PARTNERDEN GELEN ÖZLEDİM MESAJI */}
+              {latestPartnerMemory && (
+                <div className="w-full bg-rose-50 p-5 rounded-3xl border border-rose-100 mt-2 mb-2 text-center shadow-sm relative animate-in slide-in-from-top-4">
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-rose-500 text-white text-[10px] font-bold px-3 py-1 rounded-full flex items-center shadow-sm">
+                    <Sparkles className="w-3 h-3 mr-1" /> Partnerinden Gelen
+                  </div>
+                  <p className="text-sm italic text-slate-700 mt-2 font-medium">"{latestPartnerMemory.text}"</p>
+                  <span className="text-[10px] text-slate-400 mt-2 block">{formatChatDate(latestPartnerMemory.ts)}</span>
+                </div>
+              )}
+
               <div className="flex-1 flex items-center justify-center relative w-full py-10">
                 <div className={`absolute w-64 h-64 bg-rose-200 rounded-full mix-blend-multiply blur-2xl opacity-60 ${isGeneratingMemory ? 'animate-ping' : 'animate-pulse'}`}></div>
                 <button onClick={handleMissYouGenerate} disabled={isGeneratingMemory} className={`relative z-10 w-48 h-48 rounded-full flex flex-col items-center justify-center text-white shadow-2xl transition-all ${isGeneratingMemory ? 'bg-rose-600 scale-95' : 'bg-gradient-to-tr from-rose-500 to-pink-500 hover:scale-105'}`}>
@@ -583,7 +596,8 @@
                 </div>
               </div>
             </div>
-          );
+            );
+          };
 
           const renderJourneyView = () => (
             <div className="flex flex-col h-full bg-slate-50 animate-in slide-in-from-right pb-24">
@@ -698,10 +712,14 @@
               
               {/* Dokunma/Kaydırma (Swipe) Olaylarını Dinleyen Konteyner */}
               <div 
-                className="flex-1 overflow-y-auto p-4 space-y-4 relative"
-                onTouchStart={handleChatTouchStart}
-                onTouchMove={handleChatTouchMove}
-                onTouchEnd={handleChatTouchEnd}
+                className="flex-1 overflow-y-auto p-4 space-y-4 relative overflow-x-hidden select-none"
+                onTouchStart={(e) => handleChatPointerDown(e.touches[0].clientX)}
+                onTouchMove={(e) => handleChatPointerMove(e.touches[0].clientX)}
+                onTouchEnd={handleChatPointerUp}
+                onMouseDown={(e) => handleChatPointerDown(e.clientX)}
+                onMouseMove={(e) => handleChatPointerMove(e.clientX)}
+                onMouseUp={handleChatPointerUp}
+                onMouseLeave={handleChatPointerUp}
               >
                 {chatMessages.map((msg, index) => {
                   const isMe = msg.senderId === userProfile.username;
@@ -734,15 +752,15 @@
                           {/* Kaydırma ile animasyonlu hareket eden mesaj balonu */}
                           <div 
                             style={{ transform: `translateX(${chatSwipeOffset}px)` }} 
-                            className={`max-w-[75%] rounded-2xl p-3 text-sm shadow-sm flex flex-col transition-transform duration-100 ease-out z-10 ${isMe ? 'bg-rose-500 text-white rounded-br-sm' : 'bg-white border border-slate-100 text-slate-800 rounded-bl-sm'}`}
+                            className={`max-w-[75%] rounded-2xl p-3 text-sm shadow-sm flex flex-col z-10 ${isDragging ? 'transition-none' : 'transition-transform duration-200 ease-out'} ${isMe ? 'bg-rose-500 text-white rounded-br-sm' : 'bg-white border border-slate-100 text-slate-800 rounded-bl-sm'}`}
                           >
-                            {msg.imageUrl && <img src={msg.imageUrl} className="w-full rounded-xl mb-2 max-h-48 object-cover" />}
+                            {msg.imageUrl && <img src={msg.imageUrl} className="w-full rounded-xl mb-2 max-h-48 object-cover pointer-events-none" />}
                             <span className="leading-snug">{msg.text}</span>
                           </div>
 
                           {/* Gizli Saat (Kaydırınca Ekranın Sağından Ortaya Çıkar) */}
                           <div 
-                            className="absolute right-[-45px] top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-400 transition-all duration-100"
+                            className="absolute right-[-45px] top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-400 transition-opacity duration-200"
                             style={{ 
                               transform: `translateX(${chatSwipeOffset}px)`, 
                               opacity: chatSwipeOffset < -20 ? 1 : 0 
