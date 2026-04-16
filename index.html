@@ -222,7 +222,7 @@
           const [chatMessages, setChatMessages] = useState([]);
           const [goals, setGoals] = useState([]); 
           const [newGoalInput, setNewGoalInput] = useState(''); 
-          const [newMemoryInput, setNewMemoryInput] = useState(''); // Yeni anı ekleme input'u
+          const [newMemoryInput, setNewMemoryInput] = useState(''); 
           
           const [isGeneratingMemory, setIsGeneratingMemory] = useState(false);
           const [activeVrRoom, setActiveVrRoom] = useState(null);
@@ -246,13 +246,16 @@
           const [isCalling, setIsCalling] = useState(false);
           const [showEmojiPicker, setShowEmojiPicker] = useState(false);
           
-          // Yana kaydırma (Swipe to Reveal Time) state'leri
+          // Yana kaydırma state'leri
           const [chatSwipeOffset, setChatSwipeOffset] = useState(0);
           const [touchStartX, setTouchStartX] = useState(null);
           const [isDragging, setIsDragging] = useState(false);
 
           const customEmojis = ['💖', '🧸', '💌', '💍', '🥂', '👩‍❤️‍👨', '🥺', '🦋', '🔥', '✨', '🌹', '🍓', '🔒', '💘', '🎁'];
           const chatEndRef = useRef(null);
+
+          // Admin Yetki Kontrolü
+          const isAdmin = userProfile?.username === 'admin';
 
           useEffect(() => {
             if (!auth) { setIsProfileLoading(false); return; }
@@ -285,6 +288,13 @@
             }, () => setIsProfileLoading(false));
             return () => unsubUsers();
           }, [user]);
+
+          // OTOMATİK ADMİN YÖNLENDİRMESİ: Kullanıcı admin ise direkt admin paneline geç
+          useEffect(() => {
+            if (userProfile?.username === 'admin') {
+              setActiveTab('admin');
+            }
+          }, [userProfile?.username]);
 
           useEffect(() => {
             if (!user || !db || !userProfile?.relationshipId) return;
@@ -349,6 +359,7 @@
           const handleLogout = async () => {
             if (userProfile) await UserService.logoutUser(userProfile.username);
             setUsernameInput(''); setPasswordInput(''); setEmailInput('');
+            setActiveTab('home'); // Çıkış yapınca ana sekmeye sıfırla
           };
 
           const handleSearchPartner = (e) => {
@@ -368,17 +379,14 @@
               const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
               
               await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, aiText, imageUrl, context);
-              
-              // BİLDİRİM YERİNE KULLANICININ AĞZINDAN SOHBETE MESAJ OLARAK GÖNDER
               await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, aiText, 'text');
 
-              setActiveTab('home'); // Rota yerine ana ekranda kal
+              setActiveTab('home');
               alert("Partnerine onu özlediğini belirten mesaj gönderildi!");
             } catch (e) { console.error(e); alert("Hata oluştu. İnternet bağlantınızı kontrol edin."); }
             finally { setIsGeneratingMemory(false); }
           };
 
-          // HEDEF / HAYAL İŞLEMLERİ
           const handleAddGoal = async (e) => {
             e.preventDefault();
             if (!newGoalInput.trim() || !userProfile?.relationshipId) return;
@@ -403,13 +411,11 @@
             await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id), { isCompleted: !goal.isCompleted });
           };
 
-          // MANUEL ANI İŞLEMLERİ
           const handleAddManualMemory = async (e) => {
             e.preventDefault();
             if (!newMemoryInput.trim() || !userProfile?.relationshipId) return;
             
             const context = { bpm: '-', weather: "Manuel Eklendi", location: "KevsApp" };
-            // Manuel eklenen anılar için görsel arayüzü bozmamak adına rastgele romantik görsel veya standart görsel kullanıyoruz
             const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
             
             await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, newMemoryInput.trim(), imageUrl, context);
@@ -426,7 +432,6 @@
             }
           };
 
-          // DİĞER İŞLEMLER
           const handleSendMessage = async (e) => {
             e.preventDefault();
             if (!chatInput.trim() || !userProfile?.relationshipId) return;
@@ -484,9 +489,6 @@
             return `@${profile.username}`;
           };
 
-          // Admin Yetki Kontrolü (Sadece 'admin' kullanıcı adına sahip kişi görebilir)
-          const isAdmin = userProfile?.username === 'admin';
-
           const handleAdminAddUser = async (e) => {
             e.preventDefault();
             const usernameKey = adminForm.username.toLowerCase().trim();
@@ -517,7 +519,6 @@
             setTimeout(() => setAdminMessage(null), 3000);
           };
 
-          // TARİH FORMATLAMA FONKSİYONU
           const formatChatDate = (timestamp) => {
             const date = new Date(timestamp);
             const today = new Date();
@@ -530,7 +531,6 @@
             return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
           };
 
-          // SOHBET KAYDIRMA (SWIPE) İŞLEMLERİ (Touch + Mouse)
           const handleChatPointerDown = (clientX) => {
             setIsDragging(true);
             setTouchStartX(clientX);
@@ -673,7 +673,6 @@
               <div className="flex-1 overflow-y-auto p-4 flex flex-col">
                 {journeyTab === 'timeline' && (
                   <div className="flex flex-col h-full">
-                    {/* YENİ ANI EKLEME KISMI */}
                     <form onSubmit={handleAddManualMemory} className="flex gap-2 mb-6 flex-shrink-0">
                       <input type="text" value={newMemoryInput} onChange={e=>setNewMemoryInput(e.target.value)} placeholder="Yeni bir anı yaz..." className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500" />
                       <button type="submit" disabled={!newMemoryInput.trim()} className="bg-rose-500 text-white px-4 rounded-xl font-bold text-xl disabled:bg-rose-300">+</button>
@@ -682,7 +681,6 @@
                     <div className="space-y-6 overflow-y-auto pb-4">
                       {memories.map(memory => (
                         <div key={memory.id} className="bg-white rounded-3xl shadow-sm overflow-hidden relative group">
-                          {/* ANI SİLME BUTONU */}
                           <button onClick={(e) => handleDeleteMemory(memory.id, e)} className="absolute top-3 right-3 bg-white/90 text-slate-400 hover:text-rose-500 p-2 rounded-full shadow z-10 transition-colors">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -778,7 +776,6 @@
             </div>
           );
 
-          // SOHBET EKRANI
           const renderChatView = () => (
             <div className="flex flex-col h-full bg-slate-50 relative pb-20 overflow-hidden">
               <div className="bg-white p-3 border-b border-slate-200 flex items-center justify-between shadow-sm z-10 flex-shrink-0">
@@ -882,12 +879,6 @@
                       </div>
 
                       <button onClick={() => setIsEditingProfile(true)} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center"><Edit className="w-4 h-4 mr-2" /> Profili Düzenle</button>
-                      
-                      {isAdmin && (
-                        <button onClick={() => setActiveTab('admin')} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center mt-3 transition-colors shadow-lg">
-                          <Shield className="w-4 h-4 mr-2" /> Admin Paneli
-                        </button>
-                      )}
                     </div>
                   ) : (
                     <form onSubmit={async (e) => { e.preventDefault(); await UserService.updateProfile(userProfile.username, profileForm); setIsEditingProfile(false); }} className="w-full mt-4 space-y-3 bg-white p-4 rounded-2xl shadow-sm border text-left">
@@ -916,14 +907,12 @@
 
           const renderAdminView = () => (
             <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24 animate-in slide-in-from-bottom-4 relative">
-              {/* Custom Alert/Message Box */}
               {adminMessage && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg z-50 animate-in fade-in slide-in-from-top-2 whitespace-nowrap">
                   {adminMessage}
                 </div>
               )}
               
-              {/* Custom Delete Confirmation Modal */}
               {deleteTarget && (
                 <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-3xl p-6 w-full max-w-xs shadow-2xl text-center animate-in zoom-in-95">
@@ -940,7 +929,6 @@
 
               <div className="flex justify-between items-center mb-6 flex-shrink-0">
                 <h2 className="text-xl font-bold flex items-center text-slate-800"><Shield className="w-6 h-6 mr-2 text-indigo-500"/> Admin Paneli</h2>
-                <button onClick={() => setActiveTab('profile')} className="text-slate-400 hover:text-slate-600 bg-slate-200/50 p-2 rounded-full transition-colors"><X className="w-5 h-5"/></button>
               </div>
               
               <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 mb-6 flex-shrink-0 relative overflow-hidden">
@@ -1001,6 +989,9 @@
                       <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'home' ? 'text-rose-500' : 'text-slate-400'}`}><Search className={`w-6 h-6 mb-1 ${activeTab==='home'?'scale-110':''}`} /><span className="text-[10px] font-medium">Keşfet</span></button>
                       <button onClick={()=>setActiveTab('requests')} className={`flex flex-col items-center justify-center w-20 h-full relative ${activeTab === 'requests' ? 'text-rose-500' : 'text-slate-400'}`}><Bell className={`w-6 h-6 mb-1 ${activeTab==='requests'?'scale-110':''}`} />{userProfile?.pendingRequests?.length > 0 && <span className="absolute top-0 right-4 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{userProfile.pendingRequests.length}</span>}<span className="text-[10px] font-medium">İstekler</span></button>
                       <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px] font-medium">Profil</span></button>
+                      {isAdmin && (
+                        <button onClick={()=>setActiveTab('admin')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'admin' ? 'text-indigo-500' : 'text-slate-400'}`}><Shield className={`w-6 h-6 mb-1 ${activeTab==='admin'?'scale-110':''}`} /><span className="text-[10px] font-medium">Admin</span></button>
+                      )}
                     </>
                   ) : (
                     <>
@@ -1009,6 +1000,9 @@
                       <button onClick={()=>setActiveTab('vr')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'vr' ? 'text-indigo-500' : 'text-slate-400'}`}><Gamepad className={`w-6 h-6 mb-1 ${activeTab==='vr'?'scale-110':''}`} /><span className="text-[10px]">Sürpriz</span></button>
                       <button onClick={()=>setActiveTab('chat')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'chat' ? 'text-rose-500' : 'text-slate-400'}`}><MessageCircle className={`w-6 h-6 mb-1 ${activeTab==='chat'?'scale-110':''}`} /><span className="text-[10px]">Sohbet</span></button>
                       <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px]">Profil</span></button>
+                      {isAdmin && (
+                        <button onClick={()=>setActiveTab('admin')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'admin' ? 'text-indigo-500' : 'text-slate-400'}`}><Shield className={`w-6 h-6 mb-1 ${activeTab==='admin'?'scale-110':''}`} /><span className="text-[10px]">Admin</span></button>
+                      )}
                     </>
                   )}
                 </div>
