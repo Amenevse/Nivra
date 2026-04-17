@@ -1,1018 +1,1046 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>KevsApp 💖</title>
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Babel (Tarayıcıda React JSX derlemek için) -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Heart, Clock, MessageCircle, User, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, Layout, Sparkles, Coffee, ImagePlus, Wand, Brain, Edit, Upload, Smile, Gamepad, Trash2, Shield
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, setDoc, getDocs, onSnapshot, serverTimestamp, doc, updateDoc, arrayUnion, arrayRemove, deleteDoc } from 'firebase/firestore';
 
-    <!-- Import Map (React, Firebase ve İkonların modül bağlantıları) -->
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "lucide-react": "https://esm.sh/lucide-react@0.263.1",
-        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
-        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
-        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+// ==========================================
+// 1. CONFIG & ENVIRONMENT
+// ==========================================
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'kevsapp-prod';
+let app, auth, db;
+
+try {
+  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+  if (firebaseConfig) {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  }
+} catch (error) {
+  console.error("Firebase Core Initialization Error:", error);
+}
+
+// ==========================================
+// 2. CORE DOMAIN SERVICES
+// ==========================================
+const AIService = {
+  generateText: async (prompt, systemInstruction = "") => {
+    const apiKey = ""; 
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+    const payload = { contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: systemInstruction }] } };
+    const fetchWithRetry = async (retries = 5, delay = 1000) => {
+      try {
+        const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!response.ok) throw new Error('AI API Error');
+        const data = await response.json();
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || "Bağlantı kurulamadı.";
+      } catch (error) {
+        if (retries > 0) { await new Promise(resolve => setTimeout(resolve, delay)); return fetchWithRetry(retries - 1, delay * 2); }
+        return "Canım, bugün hava ne kadar güzel olursa olsun sensiz bir anlamı yok. Seni her zamankinden çok daha fazla özledim... 💖";
       }
+    };
+    return fetchWithRetry();
+  },
+
+  generateImage: async (prompt) => {
+    const apiKey = ""; 
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+    const payload = { instances: { prompt: prompt }, parameters: { sampleCount: 1 } };
+    try {
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!response.ok) throw new Error('Imagen API Error');
+      const data = await response.json();
+      return `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
+    } catch (error) {
+      const safePrompt = encodeURIComponent(prompt.substring(0, 30) + "...");
+      return `https://placehold.co/600x600/fecdd3/e11d48.png?text=${safePrompt}`;
     }
-    </script>
-</head>
-<body class="bg-slate-200">
-    <div id="root"></div>
+  }
+};
 
-    <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useRef } from 'react';
-        import { createRoot } from 'react-dom/client';
-        // Yeni özellikler için Trash2 ikonunu da ekliyoruz
-        import { 
-          Heart, Clock, MessageCircle, User, Activity, Send, Loader2, Search, Phone, LogOut, X, PhoneOff, UserPlus, Check, Bell, Eye, EyeOff, Map, Layout, Sparkles, Coffee, ImagePlus, Wand, Brain, Edit, Upload, Smile, Gamepad, Trash2, Shield
-        } from 'lucide-react';
-        import { initializeApp } from 'firebase/app';
-        import { getAuth, signInWithCustomToken, signInAnonymously, signOut, onAuthStateChanged } from 'firebase/auth';
-        // Silme işlemi için deleteDoc eklendi
-        import { getFirestore, collection, addDoc, setDoc, getDocs, onSnapshot, serverTimestamp, doc, updateDoc, arrayUnion, arrayRemove, deleteDoc } from 'firebase/firestore';
+const UserService = {
+  createUser: async (uid, userData) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userData.username), { ...userData, currentUid: uid, createdAt: serverTimestamp() }),
+  loginUser: async (uid, username) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), { currentUid: uid }, { merge: true }),
+  logoutUser: async (username) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), { currentUid: null }, { merge: true }),
+  updateProfile: async (username, updates) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), updates),
+  deleteUser: async (username) => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username)),
+  adminCreateUser: async (userData) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userData.username), { ...userData, currentUid: null, createdAt: serverTimestamp() })
+};
 
-        // ==========================================
-        // 0. ERROR BOUNDARY
-        // ==========================================
-        class ErrorBoundary extends React.Component {
-          constructor(props) {
-            super(props);
-            this.state = { hasError: false, error: null, errorInfo: null };
-          }
-          static getDerivedStateFromError(error) {
-            return { hasError: true, error };
-          }
-          componentDidCatch(error, errorInfo) {
-            console.error("React Caught Error:", error, errorInfo);
-            this.setState({ errorInfo });
-          }
-          render() {
-            if (this.state.hasError) {
-              return (
-                <div className="min-h-screen bg-rose-50 p-8 flex flex-col items-center justify-center font-sans text-slate-800">
-                  <div className="bg-white p-6 rounded-2xl shadow-xl max-w-2xl w-full border border-rose-200">
-                    <h2 className="text-2xl font-bold text-rose-600 mb-4">Uygulama Hatası ⚠️</h2>
-                    <p className="mb-4 font-medium text-slate-600">Lütfen aşağıdaki hatayı bana gönderin cemilay:</p>
-                    <pre className="bg-slate-100 p-4 rounded-xl text-[11px] overflow-auto text-slate-700 border border-slate-200">
-                      <strong className="text-rose-500">{this.state.error && this.state.error.toString()}</strong><br /><br />
-                      {this.state.errorInfo && this.state.errorInfo.componentStack}
-                    </pre>
-                  </div>
-                </div>
-              );
-            }
-            return this.props.children;
-          }
-        }
+const RelationshipService = {
+  sendRequest: async (senderUsername, targetUsername) => {
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUsername), { pendingRequests: arrayUnion(senderUsername) });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', senderUsername), { sentRequests: arrayUnion(targetUsername) });
+  },
+  acceptRequest: async (user1Username, user2Username) => {
+    const relRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'relationships'), { user1Id: user1Username, user2Id: user2Username, status: 'active', createdAt: serverTimestamp() });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { partnerId: user2Username, relationshipId: relRef.id, pendingRequests: [], sentRequests: [] });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { partnerId: user1Username, relationshipId: relRef.id, pendingRequests: [], sentRequests: [] });
+  },
+  rejectRequest: async (user1Username, user2Username) => {
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { pendingRequests: arrayRemove(user2Username) });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { sentRequests: arrayRemove(user1Username) });
+  },
+  disconnect: async (user1Username, user2Username) => {
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { partnerId: null, relationshipId: null });
+    if (user2Username) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { partnerId: null, relationshipId: null });
+  }
+};
 
-        // ==========================================
-        // 1. CONFIG & ENVIRONMENT
-        // ==========================================
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'kevsapp-prod';
-        
-        const myFirebaseConfig = {
-          apiKey: "AIzaSyD5yc_wsokPjXJPMO6TSr3jZeOUTSDIdeM",
-          authDomain: "kevsapp-23237.firebaseapp.com",
-          projectId: "kevsapp-23237",
-          storageBucket: "kevsapp-23237.firebasestorage.app",
-          messagingSenderId: "1060466667832",
-          appId: "1:1060466667832:web:58dfccf35a7573255311cd",
-          measurementId: "G-009XP1S5H8"
-        };
+const MessageService = {
+  sendMessage: async (relationshipId, senderId, text, type = 'text', imageUrl = null) => {
+    return await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), { relationshipId, senderId, type, text, imageUrl, createdAt: serverTimestamp() });
+  }
+};
 
-        let app, auth, db, initErrorMsg = null;
+const MemoryService = {
+  createMemory: async (relationshipId, senderId, text, imageUrl, context) => {
+    return await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'memories'), { relationshipId, senderId, text, imageUrl, location: context.location, weather: context.weather, bpm: context.bpm, aiGenerated: true, createdAt: serverTimestamp() });
+  }
+};
 
-        try {
-          app = initializeApp(myFirebaseConfig);
-          auth = getAuth(app);
-          db = getFirestore(app);
-        } catch (error) {
-          console.error("Firebase Core Initialization Error:", error);
-          initErrorMsg = error.message;
-        }
+// ==========================================
+// 3. UI COMPONENTS & ASSETS
+// ==========================================
+const AppLogo = ({ className = "w-32 h-32" }) => (
+  <svg viewBox="-20 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+    {/* Konuşma Balonu Çizgisi (Canlı Pembe) */}
+    <path d="M 45 90 C 40 120 60 135 95 135 C 95 135 105 160 115 150 C 120 145 110 130 110 130 C 135 125 155 105 155 75" stroke="#F9597B" strokeWidth="5.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M 155 75 C 155 45 125 35 100 35 C 65 35 45 55 45 80" stroke="#F9597B" strokeWidth="5.5" strokeLinecap="round"/>
+    
+    {/* İçteki Kalp (Turkuaz) */}
+    <path d="M 100 110 C 100 110 65 80 65 60 C 65 40 85 40 100 55 C 115 40 135 40 135 60 C 135 80 100 110 100 110" fill="#4ED7D7" />
+    
+    {/* Bildirim Balonu (Turkuaz İçi, Pembe Çerçeve) */}
+    <circle cx="145" cy="45" r="22" fill="#4ED7D7" stroke="#F9597B" strokeWidth="4.5"/>
+    <text x="145" y="54" fill="#F9597B" fontSize="24" fontWeight="bold" fontFamily="'Comic Sans MS', cursive, sans-serif" textAnchor="middle">1</text>
+    
+    {/* Parıltı Çizgileri (Pembe) */}
+    <line x1="115" y1="15" x2="122" y2="25" stroke="#F9597B" strokeWidth="4.5" strokeLinecap="round"/>
+    <line x1="102" y1="32" x2="112" y2="35" stroke="#F9597B" strokeWidth="4.5" strokeLinecap="round"/>
+    
+    {/* Nivra Metni */}
+    <text x="100" y="180" fontSize="54" fontFamily="'Comic Sans MS', cursive, sans-serif" textAnchor="middle" fontWeight="bold" letterSpacing="1">
+      <tspan fill="#F9597B">Nivr</tspan><tspan fill="#4ED7D7">a</tspan>
+    </text>
+  </svg>
+);
 
-        // ==========================================
-        // 2. CORE DOMAIN SERVICES
-        // ==========================================
+const romanticImages = ["https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&q=80", "https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&w=600&q=80", "https://images.unsplash.com/photo-1494774157365-9e04c6720e47?auto=format&fit=crop&w=600&q=80"];
 
-        const AIService = {
-          generateText: async (prompt, systemInstruction = "") => {
-            const apiKey = ""; 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-            const payload = { contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: systemInstruction }] } };
-            const fetchWithRetry = async (retries = 5, delay = 1000) => {
-              try {
-                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                if (!response.ok) throw new Error('AI API Error');
-                const data = await response.json();
-                return data.candidates?.[0]?.content?.parts?.[0]?.text || "Bağlantı kurulamadı.";
-              } catch (error) {
-                if (retries > 0) { await new Promise(resolve => setTimeout(resolve, delay)); return fetchWithRetry(retries - 1, delay * 2); }
-                return "Canım, bugün Sakarya'da hava güneşli. Keşke şu an yanımda olsaydın, seni her zamankinden daha çok özledim... 💖";
-              }
-            };
-            return fetchWithRetry();
-          },
+// ==========================================
+// 4. MAIN APPLICATION COMPONENT
+// ==========================================
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [userProfile, setUserProfile] = useState(null);
+  const [partnerProfile, setPartnerProfile] = useState(null);
+  const [isProfileLoading, setIsProfileLoading] = useState(true);
+  
+  const [authMode, setAuthMode] = useState('login');
+  const [emailInput, setEmailInput] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
-          generateImage: async (prompt) => {
-            const apiKey = ""; 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-            const payload = { instances: { prompt: prompt }, parameters: { sampleCount: 1 } };
-            try {
-              const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-              if (!response.ok) throw new Error('Imagen API Error');
-              const data = await response.json();
-              return `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
-            } catch (error) {
-              const safePrompt = encodeURIComponent(prompt.substring(0, 30) + "...");
-              return `https://placehold.co/600x600/fecdd3/e11d48.png?text=${safePrompt}`;
-            }
-          }
-        };
+  const [activeTab, setActiveTab] = useState('home');
+  const [journeyTab, setJourneyTab] = useState('timeline');
+  
+  const [memories, setMemories] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [goals, setGoals] = useState([]); 
+  const [newGoalInput, setNewGoalInput] = useState(''); 
+  const [newMemoryInput, setNewMemoryInput] = useState(''); 
+  
+  const [isGeneratingMemory, setIsGeneratingMemory] = useState(false);
+  const [activeVrRoom, setActiveVrRoom] = useState(null);
+  
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [photoMode, setPhotoMode] = useState('gallery');
+  const [aiPhotoPrompt, setAiPhotoPrompt] = useState('');
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState(null);
+  const [isGeneratingPhoto, setIsGeneratingPhoto] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ name: '', surname: '', birthDate: '', gender: '' });
+  
+  const [adminForm, setAdminForm] = useState({ username: '', email: '', password: '' });
+  const [adminMessage, setAdminMessage] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
-        const UserService = {
-          createUser: async (uid, userData) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userData.username), { ...userData, currentUid: uid, createdAt: serverTimestamp() }),
-          loginUser: async (uid, username) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), { currentUid: uid }, { merge: true }),
-          logoutUser: async (username) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), { currentUid: null }, { merge: true }),
-          updateProfile: async (username, updates) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username), updates),
-          deleteUser: async (username) => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', username)),
-          adminCreateUser: async (userData) => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userData.username), { ...userData, currentUid: null, createdAt: serverTimestamp() })
-        };
+  const [chatInput, setChatInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isCalling, setIsCalling] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  
+  // Swipe to Reveal Time States
+  const [chatSwipeOffset, setChatSwipeOffset] = useState(0);
+  const [touchStartX, setTouchStartX] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-        const RelationshipService = {
-          sendRequest: async (senderUsername, targetUsername) => {
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUsername), { pendingRequests: arrayUnion(senderUsername) });
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', senderUsername), { sentRequests: arrayUnion(targetUsername) });
-          },
-          acceptRequest: async (user1Username, user2Username) => {
-            const relRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'relationships'), { user1Id: user1Username, user2Id: user2Username, status: 'active', createdAt: serverTimestamp() });
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { partnerId: user2Username, relationshipId: relRef.id, pendingRequests: [], sentRequests: [] });
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { partnerId: user1Username, relationshipId: relRef.id, pendingRequests: [], sentRequests: [] });
-          },
-          rejectRequest: async (user1Username, user2Username) => {
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { pendingRequests: arrayRemove(user2Username) });
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { sentRequests: arrayRemove(user1Username) });
-          },
-          disconnect: async (user1Username, user2Username) => {
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user1Username), { partnerId: null, relationshipId: null });
-            if (user2Username) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user2Username), { partnerId: null, relationshipId: null });
-          }
-        };
+  const customEmojis = ['💖', '🧸', '💌', '💍', '🥂', '👩‍❤️‍👨', '🥺', '🦋', '🔥', '✨', '🌹', '🍓', '🔒', '💘', '🎁'];
+  const chatEndRef = useRef(null);
 
-        const MessageService = {
-          sendMessage: async (relationshipId, senderId, text, type = 'text', imageUrl = null) => {
-            return await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), { relationshipId, senderId, type, text, imageUrl, createdAt: serverTimestamp() });
-          }
-        };
+  const isAdmin = userProfile?.username === 'admin';
 
-        const MemoryService = {
-          createMemory: async (relationshipId, senderId, text, imageUrl, context) => {
-            return await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'memories'), { relationshipId, senderId, text, imageUrl, location: context.location, weather: context.weather, bpm: context.bpm, aiGenerated: true, createdAt: serverTimestamp() });
-          }
-        };
+  useEffect(() => {
+    if (!auth) { setIsProfileLoading(false); return; }
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          try { await signInWithCustomToken(auth, __initial_auth_token); } 
+          catch (tokenError) { await signInAnonymously(auth); }
+        } else { await signInAnonymously(auth); }
+      } catch (e) { console.error("Giriş hatası", e); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (!currentUser) setIsProfileLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
-        // ==========================================
-        // 3. UI COMPONENTS & ASSETS
-        // ==========================================
-        const AppLogo = ({ className = "w-32 h-32" }) => (
-          <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-            <path d="M 45 90 C 40 120 60 135 95 135 C 95 135 105 160 115 150 C 120 145 110 130 110 130 C 135 125 155 105 155 75" stroke="#EB4F74" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M 155 75 C 155 45 125 35 100 35 C 65 35 45 55 45 80" stroke="#EB4F74" strokeWidth="5" strokeLinecap="round"/>
-            <path d="M 100 110 C 100 110 60 80 60 60 C 60 40 85 40 100 55 C 115 40 140 40 140 60 C 140 80 100 110 100 110" fill="#44CDD5"/>
-            <circle cx="145" cy="45" r="22" fill="#44CDD5" stroke="#EB4F74" strokeWidth="3"/>
-            <text x="145" y="53" fill="#EB4F74" fontSize="24" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle">1</text>
-            <line x1="115" y1="15" x2="122" y2="25" stroke="#EB4F74" strokeWidth="4" strokeLinecap="round"/>
-            <line x1="102" y1="32" x2="112" y2="35" stroke="#EB4F74" strokeWidth="4" strokeLinecap="round"/>
-            <text x="100" y="180" fontSize="46" fontFamily="'Comic Sans MS', cursive, sans-serif" textAnchor="middle" fontWeight="bold" letterSpacing="1"><tspan fill="#EB4F74">Kevs</tspan><tspan fill="#8B6BB1">A</tspan><tspan fill="#44CDD5">pp</tspan></text>
-          </svg>
-        );
+  useEffect(() => {
+    if (!user || !db) return;
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snapshot) => {
+      const usersList = snapshot.docs.map(doc => doc.data());
+      setAllUsers(usersList);
+      const me = usersList.find(u => u.currentUid === user.uid);
+      setUserProfile(me || null);
+      if (me && me.partnerId) setPartnerProfile(usersList.find(u => u.username === me.partnerId) || null);
+      else setPartnerProfile(null);
+      setIsProfileLoading(false);
+    }, () => setIsProfileLoading(false));
+    return () => unsubUsers();
+  }, [user]);
 
-        const romanticImages = ["https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&q=80", "https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&w=600&q=80"];
+  // Admin Auto-Redirect
+  useEffect(() => {
+    if (userProfile?.username === 'admin' && !userProfile.partnerId && activeTab === 'home') {
+      setActiveTab('admin');
+    }
+  }, [userProfile?.username, activeTab, userProfile?.partnerId]);
 
-        // ==========================================
-        // 4. MAIN APPLICATION COMPONENT
-        // ==========================================
-        function App() {
-          const [user, setUser] = useState(null);
-          const [allUsers, setAllUsers] = useState([]);
-          const [userProfile, setUserProfile] = useState(null);
-          const [partnerProfile, setPartnerProfile] = useState(null);
-          const [isProfileLoading, setIsProfileLoading] = useState(true);
-          
-          const [authMode, setAuthMode] = useState('login');
-          const [emailInput, setEmailInput] = useState('');
-          const [usernameInput, setUsernameInput] = useState('');
-          const [passwordInput, setPasswordInput] = useState('');
-          const [authError, setAuthError] = useState('');
-          const [isAuthLoading, setIsAuthLoading] = useState(false);
+  useEffect(() => {
+    if (!user || !db || !userProfile?.relationshipId) return;
+    const relationshipId = userProfile.relationshipId;
 
-          const [activeTab, setActiveTab] = useState('home');
-          const [journeyTab, setJourneyTab] = useState('timeline');
-          
-          const [memories, setMemories] = useState([]);
-          const [chatMessages, setChatMessages] = useState([]);
-          const [goals, setGoals] = useState([]); 
-          const [newGoalInput, setNewGoalInput] = useState(''); 
-          const [newMemoryInput, setNewMemoryInput] = useState(''); 
-          
-          const [isGeneratingMemory, setIsGeneratingMemory] = useState(false);
-          const [activeVrRoom, setActiveVrRoom] = useState(null);
-          
-          const [showPhotoModal, setShowPhotoModal] = useState(false);
-          const [photoMode, setPhotoMode] = useState('gallery');
-          const [aiPhotoPrompt, setAiPhotoPrompt] = useState('');
-          const [photoPreviewUrl, setPhotoPreviewUrl] = useState(null);
-          const [isGeneratingPhoto, setIsGeneratingPhoto] = useState(false);
-          const [isEditingProfile, setIsEditingProfile] = useState(false);
-          const [profileForm, setProfileForm] = useState({ name: '', surname: '', birthDate: '', gender: '' });
-          
-          // Admin Panel States
-          const [adminForm, setAdminForm] = useState({ username: '', email: '', password: '' });
-          const [adminMessage, setAdminMessage] = useState(null);
-          const [deleteTarget, setDeleteTarget] = useState(null);
+    const unsubMemories = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'memories'), (snapshot) => {
+      const mms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
+        .filter(m => m.relationshipId === relationshipId).sort((a, b) => b.ts - a.ts);
+      setMemories(mms);
+    });
 
-          const [chatInput, setChatInput] = useState('');
-          const [searchQuery, setSearchQuery] = useState('');
-          const [searchResults, setSearchResults] = useState([]);
-          const [isCalling, setIsCalling] = useState(false);
-          const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-          
-          // Yana kaydırma state'leri
-          const [chatSwipeOffset, setChatSwipeOffset] = useState(0);
-          const [touchStartX, setTouchStartX] = useState(null);
-          const [isDragging, setIsDragging] = useState(false);
+    const unsubMessages = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
+        .filter(m => m.relationshipId === relationshipId).sort((a, b) => a.ts - b.ts);
+      setChatMessages(msgs);
+    });
 
-          const customEmojis = ['💖', '🧸', '💌', '💍', '🥂', '👩‍❤️‍👨', '🥺', '🦋', '🔥', '✨', '🌹', '🍓', '🔒', '💘', '🎁'];
-          const chatEndRef = useRef(null);
+    const unsubGoals = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'goals'), (snapshot) => {
+      const gls = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
+        .filter(m => m.relationshipId === relationshipId).sort((a, b) => b.ts - a.ts);
+      setGoals(gls);
+    });
 
-          // Admin Yetki Kontrolü
-          const isAdmin = userProfile?.username === 'admin';
+    return () => { unsubMemories(); unsubMessages(); unsubGoals(); };
+  }, [user, userProfile]);
 
-          useEffect(() => {
-            if (!auth) { setIsProfileLoading(false); return; }
-            const initAuth = async () => {
-              try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                  try { await signInWithCustomToken(auth, __initial_auth_token); } 
-                  catch (tokenError) { await signInAnonymously(auth); }
-                } else { await signInAnonymously(auth); }
-              } catch (e) { console.error("Giriş hatası", e); }
-            };
-            initAuth();
-            const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-              setUser(currentUser);
-              if (!currentUser) setIsProfileLoading(false);
-            });
-            return () => unsubscribe();
-          }, []);
+  useEffect(() => {
+    if (activeTab === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, activeTab]);
 
-          useEffect(() => {
-            if (!user || !db) return;
-            const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snapshot) => {
-              const usersList = snapshot.docs.map(doc => doc.data());
-              setAllUsers(usersList);
-              const me = usersList.find(u => u.currentUid === user.uid);
-              setUserProfile(me || null);
-              if (me && me.partnerId) setPartnerProfile(usersList.find(u => u.username === me.partnerId) || null);
-              else setPartnerProfile(null);
-              setIsProfileLoading(false);
-            }, () => setIsProfileLoading(false));
-            return () => unsubUsers();
-          }, [user]);
+  useEffect(() => {
+    if (userProfile) {
+      setProfileForm({ name: userProfile.name || '', surname: userProfile.surname || '', birthDate: userProfile.birthDate || '', gender: userProfile.gender || '' });
+    }
+  }, [userProfile]);
 
-          // OTOMATİK ADMİN YÖNLENDİRMESİ: Kullanıcı admin ise direkt admin paneline geç
-          useEffect(() => {
-            if (userProfile?.username === 'admin') {
-              setActiveTab('admin');
-            }
-          }, [userProfile?.username]);
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    if (!auth || !db || !user) return;
+    setAuthError(''); setIsAuthLoading(true);
+    const usernameKey = usernameInput.toLowerCase().trim();
 
-          useEffect(() => {
-            if (!user || !db || !userProfile?.relationshipId) return;
-            const relationshipId = userProfile.relationshipId;
+    try {
+      if (!usernameKey || !passwordInput.trim()) throw new Error("Gerekli alanları doldurun.");
+      if (authMode === 'register') {
+        if (!emailInput.trim()) throw new Error("E-posta gereklidir.");
+        if (allUsers.find(u => u.username === usernameKey)) throw new Error("Kullanıcı adı kullanımda.");
+        await UserService.createUser(user.uid, {
+          username: usernameKey, email: emailInput.trim(), password: passwordInput,
+          partnerId: null, relationshipId: null, isPublic: true, mbti: 'ENTP',
+          name: '', surname: '', birthDate: '', gender: '', pendingRequests: [], sentRequests: []
+        });
+      } else {
+        const targetUser = allUsers.find(u => u.username === usernameKey);
+        if (!targetUser || targetUser.password !== passwordInput) throw new Error("Hatalı giriş.");
+        await UserService.loginUser(user.uid, usernameKey);
+      }
+    } catch (err) { setAuthError(err.message); } 
+    finally { setIsAuthLoading(false); }
+  };
 
-            const unsubMemories = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'memories'), (snapshot) => {
-              const mms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
-                .filter(m => m.relationshipId === relationshipId).sort((a, b) => b.ts - a.ts);
-              setMemories(mms);
-            });
+  const handleLogout = async () => {
+    if (userProfile) await UserService.logoutUser(userProfile.username);
+    setUsernameInput(''); setPasswordInput(''); setEmailInput('');
+    setActiveTab('home'); 
+  };
 
-            const unsubMessages = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), (snapshot) => {
-              const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
-                .filter(m => m.relationshipId === relationshipId).sort((a, b) => a.ts - b.ts);
-              setChatMessages(msgs);
-            });
+  const handleSearchPartner = (e) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    setSearchResults(allUsers.filter(u => u.username !== userProfile.username && u.username.includes(searchQuery.toLowerCase().trim()) && !u.partnerId && u.isPublic));
+  };
 
-            const unsubGoals = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'goals'), (snapshot) => {
-              const gls = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), ts: doc.data().createdAt?.toMillis() || Date.now() }))
-                .filter(m => m.relationshipId === relationshipId).sort((a, b) => b.ts - a.ts);
-              setGoals(gls);
-            });
+  // Özledim Message Logic
+  const handleMissYouGenerate = async () => {
+    if (!user || !userProfile?.relationshipId) return;
+    setIsGeneratingMemory(true);
+    const context = { bpm: Math.floor(Math.random() * (120 - 70 + 1) + 70), weather: "Güneşli, 24°C", location: "Türkiye" };
+    
+    try {
+      const prompt = `Konum ${context.location}, Hava ${context.weather}, Nabız ${context.bpm} BPM. ${userProfile.username}'nin ağzından eşine romantik, 2 cümlelik özlem mesajı yaz.`;
+      const aiText = await AIService.generateText(prompt, "Sen romantik bir asistansın.");
+      const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
+      
+      await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, aiText, imageUrl, context);
+      
+      // Partnere doğrudan kendi ağzından sohbet mesajı at
+      await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, aiText, 'text');
 
-            return () => { unsubMemories(); unsubMessages(); unsubGoals(); };
-          }, [user, userProfile]);
+      setActiveTab('home');
+      alert("Partnerine onu özlediğini belirten mesaj gönderildi!");
+    } catch (e) { console.error(e); alert("Hata oluştu. İnternet bağlantınızı kontrol edin."); }
+    finally { setIsGeneratingMemory(false); }
+  };
 
-          useEffect(() => {
-            if (activeTab === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }, [chatMessages, activeTab]);
+  // Add/Delete Goals
+  const handleAddGoal = async (e) => {
+    e.preventDefault();
+    if (!newGoalInput.trim() || !userProfile?.relationshipId) return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'goals'), {
+      relationshipId: userProfile.relationshipId, text: newGoalInput.trim(), isCompleted: false, createdAt: serverTimestamp()
+    });
+    setNewGoalInput('');
+  };
 
-          useEffect(() => {
-            if (userProfile) {
-              setProfileForm({ name: userProfile.name || '', surname: userProfile.surname || '', birthDate: userProfile.birthDate || '', gender: userProfile.gender || '' });
-            }
-          }, [userProfile]);
+  const handleDeleteGoal = async (goalId, e) => {
+    e.stopPropagation(); 
+    if (!userProfile?.relationshipId) return;
+    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goalId)); } 
+    catch (err) { console.error("Silme hatası:", err); }
+  };
 
-          const handleAuthSubmit = async (e) => {
-            e.preventDefault();
-            if (!auth || !db || !user) return;
-            setAuthError(''); setIsAuthLoading(true);
-            const usernameKey = usernameInput.toLowerCase().trim();
+  const toggleGoal = async (goal) => {
+    if (!goal || !goal.id) return;
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id), { isCompleted: !goal.isCompleted });
+  };
 
-            try {
-              if (!usernameKey || !passwordInput.trim()) throw new Error("Gerekli alanları doldurun.");
-              if (authMode === 'register') {
-                if (!emailInput.trim()) throw new Error("E-posta gereklidir.");
-                if (allUsers.find(u => u.username === usernameKey)) throw new Error("Kullanıcı adı kullanımda.");
-                await UserService.createUser(user.uid, {
-                  username: usernameKey, email: emailInput.trim(), password: passwordInput,
-                  partnerId: null, relationshipId: null, isPublic: true, mbti: 'ENTP',
-                  name: '', surname: '', birthDate: '', gender: '', pendingRequests: [], sentRequests: []
-                });
-              } else {
-                const targetUser = allUsers.find(u => u.username === usernameKey);
-                if (!targetUser || targetUser.password !== passwordInput) throw new Error("Hatalı giriş.");
-                await UserService.loginUser(user.uid, usernameKey);
-              }
-            } catch (err) { setAuthError(err.message); } 
-            finally { setIsAuthLoading(false); }
-          };
+  // Add/Delete Memories
+  const handleAddManualMemory = async (e) => {
+    e.preventDefault();
+    if (!newMemoryInput.trim() || !userProfile?.relationshipId) return;
+    const context = { bpm: '-', weather: "Manuel Eklendi", location: "Nivra" };
+    const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
+    await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, newMemoryInput.trim(), imageUrl, context);
+    setNewMemoryInput('');
+  };
 
-          const handleLogout = async () => {
-            if (userProfile) await UserService.logoutUser(userProfile.username);
-            setUsernameInput(''); setPasswordInput(''); setEmailInput('');
-            setActiveTab('home'); // Çıkış yapınca ana sekmeye sıfırla
-          };
+  const handleDeleteMemory = async (memoryId, e) => {
+    e.stopPropagation();
+    if (!userProfile?.relationshipId) return;
+    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'memories', memoryId)); } 
+    catch (err) { console.error("Anı silme hatası:", err); }
+  };
 
-          const handleSearchPartner = (e) => {
-            e.preventDefault();
-            if (!searchQuery.trim()) return;
-            setSearchResults(allUsers.filter(u => u.username !== userProfile.username && u.username.includes(searchQuery.toLowerCase().trim()) && !u.partnerId && u.isPublic));
-          };
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !userProfile?.relationshipId) return;
+    const msg = chatInput; setChatInput('');
+    await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, msg, 'text');
+  };
 
-          const handleMissYouGenerate = async () => {
-            if (!user || !userProfile?.relationshipId) return;
-            setIsGeneratingMemory(true);
-            const context = { bpm: Math.floor(Math.random() * (120 - 70 + 1) + 70), weather: "Güneşli, 24°C", location: "Sakarya" };
-            
-            try {
-              const prompt = `Konum ${context.location}, Hava ${context.weather}, Nabız ${context.bpm} BPM. ${userProfile.username}'nin ağzından eşine romantik, 2 cümlelik özlem mesajı yaz.`;
-              const aiText = await AIService.generateText(prompt, "Sen romantik bir asistansın.");
-              const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
-              
-              await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, aiText, imageUrl, context);
-              await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, aiText, 'text');
+  const handleAiMediation = async () => {
+    if (!userProfile?.relationshipId) return;
+    await MessageService.sendMessage(userProfile.relationshipId, 'AI_COACH', `[AŞK KOÇU] Görünüşe göre iletişimde tansiyon artıyor. Her ikinize de 10 dakikalık bir mola öneriyorum. 🧘‍♀️🎵`, 'system');
+  };
 
-              setActiveTab('home');
-              alert("Partnerine onu özlediğini belirten mesaj gönderildi!");
-            } catch (e) { console.error(e); alert("Hata oluştu. İnternet bağlantınızı kontrol edin."); }
-            finally { setIsGeneratingMemory(false); }
-          };
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 600; canvas.height = img.height * (600 / img.width);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        setPhotoPreviewUrl(canvas.toDataURL('image/jpeg', 0.6));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
-          const handleAddGoal = async (e) => {
-            e.preventDefault();
-            if (!newGoalInput.trim() || !userProfile?.relationshipId) return;
-            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'goals'), {
-              relationshipId: userProfile.relationshipId, text: newGoalInput.trim(), isCompleted: false, createdAt: serverTimestamp()
-            });
-            setNewGoalInput('');
-          };
+  const handleAiGeneratePhoto = async () => {
+    if (!aiPhotoPrompt.trim()) return;
+    setIsGeneratingPhoto(true);
+    try {
+      const url = await AIService.generateImage(aiPhotoPrompt);
+      setPhotoPreviewUrl(url);
+    } catch (error) { console.error(error); alert("Görsel oluşturulamadı."); } 
+    finally { setIsGeneratingPhoto(false); }
+  };
 
-          const handleDeleteGoal = async (goalId, e) => {
-            e.stopPropagation(); 
-            if (!userProfile?.relationshipId) return;
-            try {
-              await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goalId));
-            } catch (err) {
-              console.error("Silme hatası:", err);
-            }
-          };
+  const handleSendPhotoSurprise = async () => {
+    if (!userProfile?.relationshipId || !photoPreviewUrl) return;
+    await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, `Fotoğraf baskısı siparişi oluşturuldu! 🖼️`, 'image', photoPreviewUrl);
+    setShowPhotoModal(false); setPhotoPreviewUrl(null); setAiPhotoPrompt(''); setActiveTab('chat');
+  };
 
-          const toggleGoal = async (goal) => {
-            if (!goal || !goal.id) return;
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id), { isCompleted: !goal.isCompleted });
-          };
+  const handleSendPhysicalGift = async (item) => {
+    if (!userProfile?.relationshipId) return;
+    await MessageService.sendMessage(userProfile.relationshipId, 'SYSTEM', `[SİSTEM SÜRPRİZİ] @${userProfile.username}, partnerine sürpriz gönderdi: ${item}! 🎁`, 'system');
+    alert(`${item} başarıyla gönderildi.`);
+  };
 
-          const handleAddManualMemory = async (e) => {
-            e.preventDefault();
-            if (!newMemoryInput.trim() || !userProfile?.relationshipId) return;
-            
-            const context = { bpm: '-', weather: "Manuel Eklendi", location: "KevsApp" };
-            const imageUrl = romanticImages[Math.floor(Math.random() * romanticImages.length)];
-            
-            await MemoryService.createMemory(userProfile.relationshipId, userProfile.username, newMemoryInput.trim(), imageUrl, context);
-            setNewMemoryInput('');
-          };
+  const getDisplayName = (profile) => {
+    if (!profile) return '';
+    if (profile.name || profile.surname) return `${profile.name || ''} ${profile.surname || ''}`.trim();
+    return `@${profile.username}`;
+  };
 
-          const handleDeleteMemory = async (memoryId, e) => {
-            e.stopPropagation();
-            if (!userProfile?.relationshipId) return;
-            try {
-              await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'memories', memoryId));
-            } catch (err) {
-              console.error("Anı silme hatası:", err);
-            }
-          };
+  // Admin Logic
+  const handleAdminAddUser = async (e) => {
+    e.preventDefault();
+    const usernameKey = adminForm.username.toLowerCase().trim();
+    if (allUsers.find(u => u.username === usernameKey)) {
+      setAdminMessage("Bu kullanıcı adı zaten sistemde mevcut.");
+      setTimeout(() => setAdminMessage(null), 3000);
+      return;
+    }
+    await UserService.adminCreateUser({
+      username: usernameKey, email: adminForm.email.trim(), password: adminForm.password,
+      partnerId: null, relationshipId: null, isPublic: true, mbti: 'ENTP',
+      name: '', surname: '', birthDate: '', gender: '', pendingRequests: [], sentRequests: []
+    });
+    setAdminForm({ username: '', email: '', password: '' });
+    setAdminMessage("Kullanıcı başarıyla oluşturuldu!");
+    setTimeout(() => setAdminMessage(null), 3000);
+  };
 
-          const handleSendMessage = async (e) => {
-            e.preventDefault();
-            if (!chatInput.trim() || !userProfile?.relationshipId) return;
-            const msg = chatInput; setChatInput('');
-            await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, msg, 'text');
-          };
+  const confirmDeleteUser = async () => {
+    if (!deleteTarget) return;
+    const userToDelete = allUsers.find(u => u.username === deleteTarget);
+    if (userToDelete && userToDelete.partnerId) {
+       await RelationshipService.disconnect(deleteTarget, userToDelete.partnerId);
+    }
+    await UserService.deleteUser(deleteTarget);
+    setDeleteTarget(null);
+    setAdminMessage(`@${deleteTarget} başarıyla silindi.`);
+    setTimeout(() => setAdminMessage(null), 3000);
+  };
 
-          const handleAiMediation = async () => {
-            if (!userProfile?.relationshipId) return;
-            await MessageService.sendMessage(userProfile.relationshipId, 'AI_COACH', `[AŞK KOÇU] Görünüşe göre iletişimde tansiyon artıyor. Her ikinize de 10 dakikalık bir mola öneriyorum. 🧘‍♀️🎵`, 'system');
-          };
+  // Chat Helpers
+  const formatChatDate = (timestamp) => {
+    const date = new Date(timestamp);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === today.toDateString()) return 'Bugün';
+    if (date.toDateString() === yesterday.toDateString()) return 'Dün';
+    return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
+  };
 
-          const handleFileUpload = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              const img = new Image();
-              img.onload = () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 600; canvas.height = img.height * (600 / img.width);
-                canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-                setPhotoPreviewUrl(canvas.toDataURL('image/jpeg', 0.6));
-              };
-              img.src = event.target.result;
-            };
-            reader.readAsDataURL(file);
-          };
+  const handleChatPointerDown = (clientX) => { setIsDragging(true); setTouchStartX(clientX); };
+  const handleChatPointerMove = (clientX) => {
+    if (!isDragging || touchStartX === null) return;
+    const deltaX = clientX - touchStartX;
+    if (deltaX < 0 && deltaX > -80) setChatSwipeOffset(deltaX);
+  };
+  const handleChatPointerUp = () => { setIsDragging(false); setTouchStartX(null); setChatSwipeOffset(0); };
 
-          const handleAiGeneratePhoto = async () => {
-            if (!aiPhotoPrompt.trim()) return;
-            setIsGeneratingPhoto(true);
-            try {
-              const url = await AIService.generateImage(aiPhotoPrompt);
-              setPhotoPreviewUrl(url);
-            } catch (error) { console.error(error); alert("Görsel oluşturulamadı."); } 
-            finally { setIsGeneratingPhoto(false); }
-          };
+  // ==============================
+  // RENDER BLOCKS (AESTHETIC UI)
+  // ==============================
 
-          const handleSendPhotoSurprise = async () => {
-            if (!userProfile?.relationshipId || !photoPreviewUrl) return;
-            await MessageService.sendMessage(userProfile.relationshipId, userProfile.username, `Fotoğraf baskısı siparişi oluşturuldu! 🖼️`, 'image', photoPreviewUrl);
-            setShowPhotoModal(false); setPhotoPreviewUrl(null); setAiPhotoPrompt(''); setActiveTab('chat');
-          };
+  if (isProfileLoading) return <div className="min-h-[100dvh] flex items-center justify-center font-sans bg-slate-50"><AppLogo className="w-32 h-32 animate-pulse drop-shadow-2xl" /></div>;
 
-          const handleSendPhysicalGift = async (item) => {
-            if (!userProfile?.relationshipId) return;
-            await MessageService.sendMessage(userProfile.relationshipId, 'SYSTEM', `[SİSTEM SÜRPRİZİ] @${userProfile.username}, partnerine sürpriz gönderdi: ${item}! 🎁`, 'system');
-            alert(`${item} başarıyla gönderildi.`);
-          };
+  if (!user || !userProfile) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center p-4 md:p-8 font-sans text-slate-900 relative overflow-hidden bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-rose-100 via-slate-50 to-indigo-100">
+        <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-rose-300 rounded-full mix-blend-multiply blur-[100px] opacity-40 animate-pulse"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-indigo-300 rounded-full mix-blend-multiply blur-[100px] opacity-40 animate-pulse delay-1000"></div>
 
-          const getDisplayName = (profile) => {
-            if (!profile) return '';
-            if (profile.name || profile.surname) return `${profile.name || ''} ${profile.surname || ''}`.trim();
-            return `@${profile.username}`;
-          };
-
-          const handleAdminAddUser = async (e) => {
-            e.preventDefault();
-            const usernameKey = adminForm.username.toLowerCase().trim();
-            if (allUsers.find(u => u.username === usernameKey)) {
-              setAdminMessage("Bu kullanıcı adı zaten sistemde mevcut.");
-              setTimeout(() => setAdminMessage(null), 3000);
-              return;
-            }
-            await UserService.adminCreateUser({
-              username: usernameKey, email: adminForm.email.trim(), password: adminForm.password,
-              partnerId: null, relationshipId: null, isPublic: true, mbti: 'ENTP',
-              name: '', surname: '', birthDate: '', gender: '', pendingRequests: [], sentRequests: []
-            });
-            setAdminForm({ username: '', email: '', password: '' });
-            setAdminMessage("Kullanıcı başarıyla oluşturuldu!");
-            setTimeout(() => setAdminMessage(null), 3000);
-          };
-
-          const confirmDeleteUser = async () => {
-            if (!deleteTarget) return;
-            const userToDelete = allUsers.find(u => u.username === deleteTarget);
-            if (userToDelete && userToDelete.partnerId) {
-               await RelationshipService.disconnect(deleteTarget, userToDelete.partnerId);
-            }
-            await UserService.deleteUser(deleteTarget);
-            setDeleteTarget(null);
-            setAdminMessage(`@${deleteTarget} başarıyla silindi.`);
-            setTimeout(() => setAdminMessage(null), 3000);
-          };
-
-          const formatChatDate = (timestamp) => {
-            const date = new Date(timestamp);
-            const today = new Date();
-            const yesterday = new Date(today);
-            yesterday.setDate(yesterday.getDate() - 1);
-
-            if (date.toDateString() === today.toDateString()) return 'Bugün';
-            if (date.toDateString() === yesterday.toDateString()) return 'Dün';
-            
-            return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
-          };
-
-          const handleChatPointerDown = (clientX) => {
-            setIsDragging(true);
-            setTouchStartX(clientX);
-          };
-          const handleChatPointerMove = (clientX) => {
-            if (!isDragging || touchStartX === null) return;
-            const deltaX = clientX - touchStartX;
-            if (deltaX < 0 && deltaX > -80) {
-                setChatSwipeOffset(deltaX);
-            }
-          };
-          const handleChatPointerUp = () => {
-            setIsDragging(false);
-            setTouchStartX(null);
-            setChatSwipeOffset(0);
-          };
-
-          if (initErrorMsg) {
-            return (
-              <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans p-4 text-slate-900">
-                 <div className="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl text-center">
-                   <AppLogo className="w-24 h-24 mx-auto mb-6" />
-                   <h2 className="text-xl font-bold mb-2 text-rose-600">Veritabanı Hatası ⚠️</h2>
-                   <p className="text-sm text-slate-600 mb-6">Firebase bağlanırken bir hata oluştu.</p>
-                   <div className="bg-rose-50 text-rose-600 text-xs p-4 rounded-xl text-left border border-rose-100 break-words">{initErrorMsg}</div>
-                 </div>
+        <div className="w-full max-w-md bg-white/60 backdrop-blur-2xl border border-white/50 rounded-[40px] shadow-[0_20px_60px_rgba(225,29,72,0.1)] p-10 relative z-10 animate-in fade-in zoom-in-95 duration-500">
+          <div className="flex flex-col items-center justify-center mb-8">
+            <AppLogo className="w-44 h-44 drop-shadow-xl" />
+            <h1 className="text-3xl font-extrabold mt-4 text-slate-800 tracking-tight">Hoş Geldiniz</h1>
+            <p className="text-sm text-slate-500 text-center mt-2 font-medium">Aşkınıza adanmış yapay zeka destekli özel alanınız.</p>
+          </div>
+          <form onSubmit={handleAuthSubmit} className="space-y-5">
+            {authMode === 'register' && (
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 ml-2">E-Posta</label>
+                <input type="email" required value={emailInput} onChange={e=>setEmailInput(e.target.value)} className="w-full bg-white/70 backdrop-blur-sm rounded-2xl px-5 py-4 text-sm border border-slate-200 focus:border-rose-400 focus:ring-4 focus:ring-rose-100 outline-none transition-all shadow-sm" placeholder="ornek@mail.com" />
               </div>
-            );
-          }
-
-          if (isProfileLoading) return <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center font-sans"><AppLogo className="w-32 h-32 animate-pulse" /></div>;
-
-          if (!user || !userProfile) {
-            return (
-              <div className="min-h-[100dvh] bg-slate-50 flex flex-col items-center justify-center p-4 md:p-8 font-sans text-slate-900 relative overflow-hidden">
-                <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-rose-200 rounded-full mix-blend-multiply blur-3xl opacity-30 animate-pulse"></div>
-                <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-indigo-200 rounded-full mix-blend-multiply blur-3xl opacity-30 animate-pulse delay-1000"></div>
-
-                <div className="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 border border-white relative z-10">
-                  <div className="flex flex-col items-center justify-center mb-6">
-                    <AppLogo className="w-40 h-40 drop-shadow-sm" />
-                    <h1 className="text-2xl font-bold mt-3 text-slate-800">Hoş Geldiniz</h1>
-                    <p className="text-sm text-slate-500 text-center mt-1">İlişkiniz için yapay zeka destekli özel alanınız.</p>
-                  </div>
-                  <form onSubmit={handleAuthSubmit} className="space-y-4">
-                    {authMode === 'register' && (
-                      <div><label className="block text-xs font-semibold text-slate-600 mb-1 ml-1">E-Posta</label><input type="email" required value={emailInput} onChange={e=>setEmailInput(e.target.value)} className="w-full bg-slate-50/50 rounded-2xl px-4 py-3 text-sm border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none" placeholder="ornek@mail.com" /></div>
-                    )}
-                    <div><label className="block text-xs font-semibold text-slate-600 mb-1 ml-1">Kullanıcı Adı</label><input type="text" required value={usernameInput} onChange={e=>setUsernameInput(e.target.value)} className="w-full bg-slate-50/50 rounded-2xl px-4 py-3 text-sm border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none" placeholder="Kullanıcı adınız" /></div>
-                    <div><label className="block text-xs font-semibold text-slate-600 mb-1 ml-1">Şifre</label><input type="password" required value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} className="w-full bg-slate-50/50 rounded-2xl px-4 py-3 text-sm border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none" placeholder="••••••••" /></div>
-                    {authError && <p className="text-rose-500 text-xs text-center bg-rose-50 p-3 rounded-xl border border-rose-100 font-medium animate-in fade-in">{authError}</p>}
-                    <button disabled={isAuthLoading} className="w-full bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center shadow-lg shadow-rose-500/30 hover:shadow-rose-500/50 mt-2">
-                      {isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (authMode === 'login' ? 'Giriş Yap' : 'Kayıt Ol')}
-                    </button>
-                  </form>
-                  <div className="mt-6 text-center">
-                    <button onClick={()=>{setAuthMode(authMode==='login'?'register':'login');setAuthError('');}} className="text-sm font-medium text-slate-500 hover:text-rose-600">
-                      {authMode === 'login' ? 'Hesabınız yok mu? ' : 'Zaten hesabınız var mı? '}<span className="font-bold underline decoration-2 underline-offset-4">{authMode === 'login' ? 'Kayıt Olun' : 'Giriş Yapın'}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          const renderDiscoverView = () => (
-            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto animate-in fade-in pb-24">
-              <div className="text-center mb-8 mt-4 flex-shrink-0"><Search className="w-16 h-16 text-rose-500 mx-auto mb-2 opacity-50"/> <h2 className="text-2xl font-bold">Keşfet & Eşleş</h2></div>
-              <form onSubmit={handleSearchPartner} className="flex gap-2 mb-6 flex-shrink-0">
-                <input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Kullanıcı adı ara..." className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-                <button type="submit" className="bg-rose-500 text-white p-3 rounded-xl"><Search className="w-5 h-5"/></button>
-              </form>
-              <div className="space-y-3 flex-shrink-0">
-                {searchResults.map(result => (
-                  <div key={result.username} className="bg-white p-4 rounded-2xl flex items-center justify-between shadow-sm border border-slate-100">
-                    <div className="flex items-center gap-3"><div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-bold uppercase">{result.username.charAt(0)}</div><span className="font-bold text-slate-700">@{result.username}</span></div>
-                    {userProfile.sentRequests?.includes(result.username) ? <button disabled className="bg-slate-100 text-slate-400 text-xs font-bold px-3 py-2 rounded-full"><Check className="w-3 h-3 inline"/> İstek Gitti</button> : <button onClick={()=>RelationshipService.sendRequest(userProfile.username, result.username)} className="bg-rose-500 text-white text-xs font-bold px-3 py-2 rounded-full hover:bg-rose-600"><UserPlus className="w-3 h-3 inline"/> İstek At</button>}
-                  </div>
-                ))}
-              </div>
+            )}
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 ml-2">Kullanıcı Adı</label>
+              <input type="text" required value={usernameInput} onChange={e=>setUsernameInput(e.target.value)} className="w-full bg-white/70 backdrop-blur-sm rounded-2xl px-5 py-4 text-sm border border-slate-200 focus:border-rose-400 focus:ring-4 focus:ring-rose-100 outline-none transition-all shadow-sm" placeholder="Kullanıcı adınız" />
             </div>
-          );
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 ml-2">Şifre</label>
+              <input type="password" required value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} className="w-full bg-white/70 backdrop-blur-sm rounded-2xl px-5 py-4 text-sm border border-slate-200 focus:border-rose-400 focus:ring-4 focus:ring-rose-100 outline-none transition-all shadow-sm" placeholder="••••••••" />
+            </div>
+            {authError && <p className="text-rose-500 text-xs text-center bg-rose-50/80 p-3 rounded-2xl border border-rose-100 font-medium animate-in fade-in">{authError}</p>}
+            
+            <button disabled={isAuthLoading} className="w-full bg-gradient-to-r from-rose-500 to-indigo-500 hover:from-rose-600 hover:to-indigo-600 text-white font-bold py-4 rounded-2xl flex items-center justify-center shadow-[0_10px_20px_rgba(225,29,72,0.25)] hover:shadow-[0_15px_30px_rgba(225,29,72,0.35)] hover:-translate-y-0.5 active:scale-95 transition-all duration-200 mt-4">
+              {isAuthLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : (authMode === 'login' ? 'Giriş Yap' : 'Kayıt Ol')}
+            </button>
+          </form>
+          <div className="mt-8 text-center">
+            <button onClick={()=>{setAuthMode(authMode==='login'?'register':'login');setAuthError('');}} className="text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors">
+              {authMode === 'login' ? 'Henüz hesabınız yok mu? ' : 'Zaten bir hesabınız var mı? '}
+              <span className="font-bold underline decoration-2 underline-offset-4 text-slate-800">{authMode === 'login' ? 'Kayıt Olun' : 'Giriş Yapın'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-          const renderRequestsView = () => (
-            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24">
-              <h2 className="text-xl font-bold mb-6 flex items-center flex-shrink-0"><Bell className="w-5 h-5 mr-2 text-rose-500"/> Gelen İstekler</h2>
-              {userProfile.pendingRequests?.map(req => (
-                <div key={req} className="bg-white p-5 rounded-2xl shadow-sm text-center mb-4">
-                  <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center text-2xl uppercase mx-auto mb-3">{req.charAt(0)}</div>
-                  <p className="font-bold mb-4">@{req}</p>
-                  <div className="flex space-x-2">
-                    <button onClick={()=>RelationshipService.rejectRequest(userProfile.username, req)} className="flex-1 bg-slate-100 py-2 rounded-xl text-sm font-bold text-slate-600">Reddet</button>
-                    <button onClick={()=>RelationshipService.acceptRequest(userProfile.username, req)} className="flex-1 bg-rose-500 py-2 rounded-xl text-sm font-bold text-white">Kabul Et</button>
+  const renderDiscoverView = () => (
+    <div className="flex flex-col h-full p-6 overflow-y-auto animate-in fade-in duration-500 pb-32">
+      <div className="text-center mb-10 mt-6 flex-shrink-0">
+        <div className="w-20 h-20 bg-white shadow-xl shadow-rose-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-rose-50">
+           <Search className="w-8 h-8 text-rose-500"/> 
+        </div>
+        <h2 className="text-3xl font-extrabold text-slate-800">Keşfet & Eşleş</h2>
+        <p className="text-sm text-slate-500 mt-2 font-medium">Partnerinizi bulun ve bağınızı kurun.</p>
+      </div>
+      
+      <form onSubmit={handleSearchPartner} className="flex gap-3 mb-8 flex-shrink-0">
+        <input type="text" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Kullanıcı adı ara..." className="flex-1 bg-white/80 backdrop-blur-md shadow-lg shadow-slate-200/50 border border-white rounded-2xl px-5 py-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-rose-400 transition-all" />
+        <button type="submit" className="bg-gradient-to-r from-rose-500 to-pink-500 text-white p-4 rounded-2xl shadow-lg shadow-rose-200 hover:-translate-y-1 active:scale-95 transition-all"><Search className="w-6 h-6"/></button>
+      </form>
+      
+      <div className="space-y-4 flex-shrink-0">
+        {searchResults.map(result => (
+          <div key={result.username} className="bg-white/80 backdrop-blur-md p-4 rounded-3xl shadow-lg shadow-slate-200/40 border border-white flex items-center justify-between group hover:shadow-xl hover:bg-white transition-all">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-indigo-100 to-rose-100 text-indigo-700 font-extrabold text-lg uppercase rounded-2xl flex items-center justify-center shadow-inner">
+                {result.username.charAt(0)}
+              </div>
+              <span className="font-bold text-slate-800 text-base">@{result.username}</span>
+            </div>
+            {userProfile.sentRequests?.includes(result.username) ? 
+              <button disabled className="bg-slate-100 text-slate-400 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center"><Check className="w-4 h-4 mr-1"/> Gönderildi</button> : 
+              <button onClick={()=>RelationshipService.sendRequest(userProfile.username, result.username)} className="bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center shadow-lg shadow-indigo-200 hover:-translate-y-0.5 active:scale-95 transition-all"><UserPlus className="w-4 h-4 mr-1"/> İstek At</button>
+            }
+          </div>
+        ))}
+        {searchQuery && searchResults.length === 0 && <p className="text-center text-slate-400 text-sm mt-8 font-medium">Kullanıcı bulunamadı.</p>}
+      </div>
+    </div>
+  );
+
+  const renderRequestsView = () => (
+    <div className="flex flex-col h-full p-6 overflow-y-auto animate-in fade-in duration-500 pb-32">
+      <div className="flex items-center mb-8 flex-shrink-0">
+        <div className="w-12 h-12 bg-white shadow-md rounded-2xl flex items-center justify-center mr-4 border border-rose-50"><Bell className="w-6 h-6 text-rose-500"/></div>
+        <h2 className="text-2xl font-extrabold text-slate-800">Gelen İstekler</h2>
+      </div>
+      
+      {userProfile.pendingRequests?.length === 0 && <p className="text-center text-slate-400 text-sm mt-10 font-medium">Henüz bir eşleşme isteğiniz yok.</p>}
+      
+      <div className="space-y-4">
+        {userProfile.pendingRequests?.map(req => (
+          <div key={req} className="bg-white/90 backdrop-blur-md p-6 rounded-3xl shadow-xl shadow-slate-200/50 border border-white text-center">
+            <div className="w-20 h-20 bg-gradient-to-br from-rose-100 to-pink-100 text-rose-600 rounded-[28px] flex items-center justify-center text-3xl font-black uppercase mx-auto mb-4 shadow-inner">{req.charAt(0)}</div>
+            <p className="font-extrabold text-lg text-slate-800 mb-6">@{req}</p>
+            <div className="flex gap-3">
+              <button onClick={()=>RelationshipService.rejectRequest(userProfile.username, req)} className="flex-1 bg-slate-100 hover:bg-slate-200 py-3.5 rounded-2xl text-sm font-bold text-slate-600 transition-colors active:scale-95">Reddet</button>
+              <button onClick={()=>RelationshipService.acceptRequest(userProfile.username, req)} className="flex-1 bg-gradient-to-r from-rose-500 to-pink-500 py-3.5 rounded-2xl text-sm font-bold text-white shadow-lg shadow-rose-200 hover:-translate-y-0.5 active:scale-95 transition-all">Kabul Et</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderHomeView = () => {
+    const latestPartnerMemory = memories.find(m => m.senderId === partnerProfile?.username);
+    return (
+    <div className="flex flex-col items-center h-full p-6 animate-in zoom-in-95 duration-500 overflow-y-auto pb-32">
+      <div className="text-center flex flex-col items-center mt-6">
+        <AppLogo className="w-36 h-36 drop-shadow-2xl" />
+        <div className="mt-4 inline-flex items-center bg-white/80 backdrop-blur-md px-4 py-1.5 rounded-full shadow-sm border border-white">
+          <span className="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse"></span>
+          <p className="text-slate-600 text-xs font-bold">Partnerin <span className="text-indigo-600">@{partnerProfile?.username}</span> ile bağlandın</p>
+        </div>
+      </div>
+      
+      {/* PARTNERDEN GELEN ÖZLEDİM MESAJI EKRANIN TEPESİNDE GÖZÜKÜR */}
+      {latestPartnerMemory && (
+        <div className="w-full max-w-sm bg-white/70 backdrop-blur-xl p-6 rounded-3xl mt-6 text-center shadow-xl shadow-rose-100/50 border border-white relative animate-in slide-in-from-top-4">
+          <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-rose-500 to-pink-500 text-white text-[10px] font-extrabold px-4 py-1.5 rounded-full flex items-center shadow-lg shadow-rose-200">
+            <Sparkles className="w-3 h-3 mr-1.5" /> Partnerinden
+          </div>
+          <p className="text-[15px] italic text-slate-800 mt-3 font-semibold leading-relaxed">"{latestPartnerMemory.text}"</p>
+          <span className="text-[11px] text-slate-400 mt-3 block font-medium">{formatChatDate(latestPartnerMemory.ts)}</span>
+        </div>
+      )}
+
+      <div className="flex-1 flex items-center justify-center relative w-full py-12">
+        <div className={`absolute w-72 h-72 bg-gradient-to-tr from-rose-300 to-indigo-300 rounded-full mix-blend-multiply blur-[60px] opacity-50 ${isGeneratingMemory ? 'animate-ping' : 'animate-pulse'}`}></div>
+        <button 
+          onClick={handleMissYouGenerate} 
+          disabled={isGeneratingMemory} 
+          className={`relative z-10 w-56 h-56 rounded-full flex flex-col items-center justify-center text-white shadow-[0_20px_50px_rgba(225,29,72,0.3)] border-4 border-white/20 transition-all duration-300 ${isGeneratingMemory ? 'bg-rose-600 scale-95' : 'bg-gradient-to-br from-rose-400 via-rose-500 to-pink-600 hover:scale-105 hover:shadow-[0_0_60px_rgba(225,29,72,0.5)] active:scale-95'}`}
+        >
+          {isGeneratingMemory ? 
+            <><Loader2 className="w-14 h-14 animate-spin mb-3" /><span className="font-bold tracking-wider text-sm">HİSSEDİLİYOR...</span></> : 
+            <><Heart className="w-20 h-20 mb-3 fill-white/90 drop-shadow-md animate-pulse" /><span className="font-black text-2xl tracking-widest drop-shadow-md">ÖZLEDİM</span></>
+          }
+        </button>
+      </div>
+      
+      <div className="w-full bg-white/80 backdrop-blur-md p-6 rounded-[32px] shadow-xl shadow-slate-200/50 border border-white">
+        <h3 className="text-xs font-extrabold text-slate-800 mb-5 flex items-center uppercase tracking-wider"><Activity className="w-4 h-4 mr-2 text-rose-500"/> Canlı Bağ Durumu</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-100 flex flex-col items-center shadow-sm">
+            <Heart className="w-7 h-7 text-rose-500 mb-2 fill-rose-500/20 animate-pulse"/>
+            <span className="text-3xl font-black text-slate-800 tracking-tighter">78</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase mt-1">Senin Nabzın</span>
+          </div>
+          <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-100 flex flex-col items-center shadow-sm">
+            <Brain className="w-7 h-7 text-indigo-500 mb-2"/>
+            <span className="text-3xl font-black text-slate-800 tracking-tighter">%85</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase mt-1">Sinerji</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    );
+  };
+
+  const renderJourneyView = () => (
+    <div className="flex flex-col h-full animate-in slide-in-from-right duration-300 relative">
+      <div className="bg-white/85 backdrop-blur-2xl p-4 z-20 flex space-x-3 sticky top-0 border-b border-white/60 shadow-[0_10px_40px_rgba(0,0,0,0.05)]">
+        <button onClick={()=>setJourneyTab('timeline')} className={`flex-1 py-3 rounded-2xl text-xs font-extrabold flex items-center justify-center transition-all ${journeyTab==='timeline'?'bg-rose-500 text-white shadow-lg shadow-rose-200':'bg-white text-slate-600 shadow-sm border border-slate-100 hover:bg-slate-50'}`}><Clock className="w-4 h-4 mr-1.5"/> Anılar</button>
+        <button onClick={()=>setJourneyTab('board')} className={`flex-1 py-3 rounded-2xl text-xs font-extrabold flex items-center justify-center transition-all ${journeyTab==='board'?'bg-indigo-500 text-white shadow-lg shadow-indigo-200':'bg-white text-slate-600 shadow-sm border border-slate-100 hover:bg-slate-50'}`}><Layout className="w-4 h-4 mr-1.5"/> Hedefler</button>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-6 flex flex-col pb-32">
+        {journeyTab === 'timeline' && (
+          <div className="flex flex-col h-full animate-in fade-in">
+            <form onSubmit={handleAddManualMemory} className="flex gap-3 mb-8 flex-shrink-0">
+              <input type="text" value={newMemoryInput} onChange={e=>setNewMemoryInput(e.target.value)} placeholder="Unutulmaz bir anı yaz..." className="flex-1 bg-white/80 backdrop-blur-md border border-white shadow-lg shadow-slate-200/40 rounded-2xl px-5 py-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-rose-400 transition-all" />
+              <button type="submit" disabled={!newMemoryInput.trim()} className="bg-rose-500 text-white px-5 rounded-2xl font-bold text-2xl shadow-lg shadow-rose-200 disabled:opacity-50 active:scale-95 transition-all">+</button>
+            </form>
+            
+            <div className="space-y-8">
+              {memories.map(memory => (
+                <div key={memory.id} className="bg-white/90 backdrop-blur-md rounded-[32px] shadow-xl shadow-slate-200/50 border border-white overflow-hidden relative group hover:-translate-y-1 transition-all duration-300">
+                  <button onClick={(e) => handleDeleteMemory(memory.id, e)} className="absolute top-4 right-4 bg-white/80 backdrop-blur-md text-slate-400 hover:text-rose-500 p-2.5 rounded-full shadow-lg z-10 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100 active:scale-90">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                  <div className="h-56 relative overflow-hidden">
+                    <img src={memory.imageUrl} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent"></div>
+                    <div className="absolute bottom-4 left-4 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full text-[11px] font-bold text-white shadow-sm flex items-center border border-white/30"><Clock className="w-3 h-3 mr-1.5"/> {new Date(memory.ts).toLocaleDateString()}</div>
                   </div>
+                  <div className="p-6"><p className="text-[15px] font-medium text-slate-700 leading-relaxed">"{memory.text}"</p></div>
                 </div>
               ))}
+              {memories.length === 0 && <p className="text-center text-slate-400 mt-12 text-sm font-medium">Anı galeriniz bomboş. İlk anınızı yaratmak için "Özledim" butonuna basın!</p>}
             </div>
-          );
-
-          const renderHomeView = () => {
-            const latestPartnerMemory = memories.find(m => m.senderId === partnerProfile?.username);
-            return (
-            <div className="flex flex-col items-center h-full space-y-6 p-6 animate-in fade-in bg-white overflow-y-auto pb-24">
-              <div className="text-center flex flex-col items-center mt-4"><AppLogo className="w-32 h-32" /><p className="text-slate-500 text-sm mt-2">Partnerin <span className="font-bold text-rose-500">@{partnerProfile?.username}</span> ile bağın.</p></div>
-              
-              {/* PARTNERDEN GELEN ÖZLEDİM MESAJI */}
-              {latestPartnerMemory && (
-                <div className="w-full bg-rose-50 p-5 rounded-3xl border border-rose-100 mt-2 mb-2 text-center shadow-sm relative animate-in slide-in-from-top-4">
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-rose-500 text-white text-[10px] font-bold px-3 py-1 rounded-full flex items-center shadow-sm">
-                    <Sparkles className="w-3 h-3 mr-1" /> Partnerinden Gelen
-                  </div>
-                  <p className="text-sm italic text-slate-700 mt-2 font-medium">"{latestPartnerMemory.text}"</p>
-                  <span className="text-[10px] text-slate-400 mt-2 block">{formatChatDate(latestPartnerMemory.ts)}</span>
-                </div>
-              )}
-
-              <div className="flex-1 flex items-center justify-center relative w-full py-10">
-                <div className={`absolute w-64 h-64 bg-rose-200 rounded-full mix-blend-multiply blur-2xl opacity-60 ${isGeneratingMemory ? 'animate-ping' : 'animate-pulse'}`}></div>
-                <button onClick={handleMissYouGenerate} disabled={isGeneratingMemory} className={`relative z-10 w-48 h-48 rounded-full flex flex-col items-center justify-center text-white shadow-2xl transition-all ${isGeneratingMemory ? 'bg-rose-600 scale-95' : 'bg-gradient-to-tr from-rose-500 to-pink-500 hover:scale-105'}`}>
-                  {isGeneratingMemory ? <><Loader2 className="w-12 h-12 animate-spin mb-2 mx-auto" /><span className="font-semibold text-sm block">Üretiliyor...</span></> : <><Heart className="w-16 h-16 mb-2 fill-white animate-pulse mx-auto" /><span className="font-bold text-xl block">ÖZLEDİM</span></>}
-                </button>
-              </div>
-              <div className="w-full bg-slate-50 p-5 rounded-3xl shadow-sm border border-slate-100">
-                <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center"><Activity className="w-4 h-4 mr-2 text-rose-500"/> Biyometrik Analiz (Canlı)</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col items-center"><Heart className="w-6 h-6 text-rose-500 mb-1 fill-rose-500 animate-pulse"/><span className="text-2xl font-bold text-slate-800">78</span><span className="text-xs text-slate-500">Senin Nabzın</span></div>
-                  <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col items-center"><Brain className="w-6 h-6 text-indigo-500 mb-1"/><span className="text-2xl font-bold text-slate-800">%85</span><span className="text-xs text-slate-500">Mutluluk Endeksi</span></div>
-                </div>
-              </div>
-            </div>
-            );
-          };
-
-          const renderJourneyView = () => (
-            <div className="flex flex-col h-full bg-slate-50 animate-in slide-in-from-right pb-24">
-              <div className="p-4 bg-white shadow-sm z-10 flex space-x-2">
-                <button onClick={()=>setJourneyTab('timeline')} className={`flex-1 py-2 rounded-full text-xs font-bold flex items-center justify-center ${journeyTab==='timeline'?'bg-rose-500 text-white':'bg-slate-100 text-slate-600'}`}><Clock className="w-3 h-3 mr-1"/> Anılar</button>
-                <button onClick={()=>setJourneyTab('board')} className={`flex-1 py-2 rounded-full text-xs font-bold flex items-center justify-center ${journeyTab==='board'?'bg-rose-500 text-white':'bg-slate-100 text-slate-600'}`}><Layout className="w-3 h-3 mr-1"/> Hedefler</button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 flex flex-col">
-                {journeyTab === 'timeline' && (
-                  <div className="flex flex-col h-full">
-                    <form onSubmit={handleAddManualMemory} className="flex gap-2 mb-6 flex-shrink-0">
-                      <input type="text" value={newMemoryInput} onChange={e=>setNewMemoryInput(e.target.value)} placeholder="Yeni bir anı yaz..." className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500" />
-                      <button type="submit" disabled={!newMemoryInput.trim()} className="bg-rose-500 text-white px-4 rounded-xl font-bold text-xl disabled:bg-rose-300">+</button>
-                    </form>
-                    
-                    <div className="space-y-6 overflow-y-auto pb-4">
-                      {memories.map(memory => (
-                        <div key={memory.id} className="bg-white rounded-3xl shadow-sm overflow-hidden relative group">
-                          <button onClick={(e) => handleDeleteMemory(memory.id, e)} className="absolute top-3 right-3 bg-white/90 text-slate-400 hover:text-rose-500 p-2 rounded-full shadow z-10 transition-colors">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                          
-                          <div className="h-40 relative"><img src={memory.imageUrl} className="w-full h-full object-cover" /><div className="absolute top-3 left-3 bg-white/90 px-2 py-1 rounded-full text-[10px] font-bold shadow flex items-center"><Clock className="w-3 h-3 mr-1"/> {new Date(memory.ts).toLocaleDateString()}</div></div>
-                          <div className="p-4"><p className="text-sm italic text-slate-700">"{memory.text}"</p></div>
-                        </div>
-                      ))}
-                      {memories.length === 0 && <p className="text-center text-slate-400 mt-10 text-sm">Henüz bir anı oluşturmadınız.</p>}
-                    </div>
-                  </div>
-                )}
-                
-                {journeyTab === 'board' && (
-                  <div className="flex flex-col h-full">
-                    <form onSubmit={handleAddGoal} className="flex gap-2 mb-4 flex-shrink-0">
-                      <input type="text" value={newGoalInput} onChange={e=>setNewGoalInput(e.target.value)} placeholder="Yeni bir hayal veya hedef ekle..." className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500" />
-                      <button type="submit" disabled={!newGoalInput.trim()} className="bg-rose-500 text-white px-4 rounded-xl font-bold text-xl disabled:bg-rose-300">+</button>
-                    </form>
-                    
-                    <div className="grid grid-cols-2 gap-4 flex-1">
-                      <div className="bg-slate-200/50 rounded-2xl p-3 flex flex-col max-h-[60vh] overflow-y-auto">
-                        <h3 className="font-bold text-[11px] mb-3 text-slate-600 uppercase tracking-wider sticky top-0 bg-slate-100/90 py-1 z-10">Yapılacaklar</h3>
-                        <div className="space-y-2">
-                          {goals.filter(g => !g.isCompleted).map(g => (
-                            <div key={g.id} onClick={() => toggleGoal(g)} className="bg-white p-3 rounded-xl shadow-sm text-xs border-l-4 border-rose-500 cursor-pointer hover:bg-slate-50 transition-colors flex justify-between items-center group">
-                              <span className="flex-1">{g.text}</span>
-                              <button onClick={(e) => handleDeleteGoal(g.id, e)} className="text-slate-300 hover:text-rose-500 transition-colors p-1 ml-1">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ))}
-                          {goals.filter(g => !g.isCompleted).length === 0 && <p className="text-[10px] text-slate-400 text-center py-4">Liste boş</p>}
-                        </div>
-                      </div>
-                      
-                      <div className="bg-green-100/50 rounded-2xl p-3 flex flex-col max-h-[60vh] overflow-y-auto">
-                        <h3 className="font-bold text-[11px] mb-3 text-green-700 uppercase tracking-wider sticky top-0 bg-green-100/90 py-1 z-10">Tamamlananlar</h3>
-                        <div className="space-y-2">
-                          {goals.filter(g => g.isCompleted).map(g => (
-                            <div key={g.id} onClick={() => toggleGoal(g)} className="bg-white p-3 rounded-xl shadow-sm text-xs border-l-4 border-green-500 opacity-60 cursor-pointer hover:bg-slate-50 transition-colors flex justify-between items-center group">
-                              <span className="line-through flex-1">{g.text}</span>
-                              <button onClick={(e) => handleDeleteGoal(g.id, e)} className="text-slate-400 hover:text-rose-500 transition-colors p-1 ml-1 opacity-100">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ))}
-                           {goals.filter(g => g.isCompleted).length === 0 && <p className="text-[10px] text-slate-400 text-center py-4">Henüz tamamlanan yok</p>}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-
-          const renderVrView = () => (
-            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24 relative">
-              {showPhotoModal && (
-                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-                  <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-[90%] overflow-y-auto">
-                    <button onClick={() => setShowPhotoModal(false)} className="absolute top-4 right-4 text-slate-400"><X className="w-5 h-5" /></button>
-                    <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center"><ImagePlus className="w-5 h-5 mr-2 text-rose-500" /> Sürpriz Fotoğraf</h2>
-                    {!photoPreviewUrl ? (
-                      <>
-                        <div className="flex bg-slate-100 p-1 rounded-xl mb-4"><button onClick={() => setPhotoMode('gallery')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${photoMode === 'gallery' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500'}`}>Galeriden</button><button onClick={() => setPhotoMode('ai')} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center ${photoMode === 'ai' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}><Wand className="w-4 h-4 mr-1"/> Yapay Zeka</button></div>
-                        {photoMode === 'gallery' ? (
-                          <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-2xl p-8 bg-slate-50 relative"><input type="file" accept="image/*" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /><Upload className="w-10 h-10 text-slate-400 mb-3" /><p className="text-sm font-bold text-slate-600">Fotoğraf Seç</p></div>
-                        ) : (
-                          <div className="flex flex-col"><textarea value={aiPhotoPrompt} onChange={e => setAiPhotoPrompt(e.target.value)} placeholder="Örn: Gün batımında iki kahve fincanı..." className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm min-h-[100px] resize-none mb-3"></textarea><button onClick={handleAiGeneratePhoto} disabled={!aiPhotoPrompt.trim() || isGeneratingPhoto} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded-xl flex items-center justify-center">{isGeneratingPhoto ? <Loader2 className="w-5 h-5 animate-spin mr-2"/> : 'Üret'}</button></div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="flex flex-col items-center"><div className="w-full rounded-2xl overflow-hidden mb-4 relative"><img src={photoPreviewUrl} className="w-full max-h-[300px] object-contain" /><button onClick={() => setPhotoPreviewUrl(null)} className="absolute top-2 right-2 bg-black/50 text-white p-2 rounded-full"><X className="w-4 h-4"/></button></div><button onClick={handleSendPhotoSurprise} className="w-full bg-rose-500 text-white font-bold py-3 rounded-xl w-full">Baskıya Gönder</button></div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {activeVrRoom && (
-                <div className="absolute inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center text-white"><Sparkles className="w-16 h-16 text-indigo-400 mb-4 animate-spin-slow"/><h2 className="text-2xl font-bold mb-2">Sanal Oda</h2><button onClick={()=>setActiveVrRoom(null)} className="px-6 py-2 bg-rose-600 rounded-full font-bold">Odadan Çık</button></div>
-              )}
-
-              <h2 className="text-xl font-bold mb-6 flex items-center"><Sparkles className="w-5 h-5 mr-2 text-indigo-500"/> VR/AR Odaları</h2>
-              <div className="grid grid-cols-1 gap-4 mb-8">
-                <div onClick={()=>setActiveVrRoom('balloon')} className="bg-indigo-600 p-5 rounded-3xl text-white shadow-lg cursor-pointer"><h3 className="font-bold text-lg">Balon Turu Odası</h3></div>
-              </div>
-              <h2 className="text-xl font-bold mb-4 flex items-center"><Coffee className="w-5 h-5 mr-2 text-rose-500"/> Hibrit Fiziksel Sürprizler</h2>
-              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 text-center">
-                <div className="flex gap-2 w-full"><button onClick={()=>handleSendPhysicalGift('Filtre Kahve ☕️')} className="flex-1 bg-slate-100 py-3 rounded-xl text-xs font-bold w-full">Kahve Ismarla</button><button onClick={()=>setShowPhotoModal(true)} className="flex-1 bg-rose-50 text-rose-600 py-3 rounded-xl text-xs font-bold w-full flex items-center justify-center"><ImagePlus className="w-4 h-4 inline mr-1"/> Fotoğraf Yolla</button></div>
-              </div>
-            </div>
-          );
-
-          const renderChatView = () => (
-            <div className="flex flex-col h-full bg-slate-50 relative pb-20 overflow-hidden">
-              <div className="bg-white p-3 border-b border-slate-200 flex items-center justify-between shadow-sm z-10 flex-shrink-0">
-                <div className="flex items-center"><div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mr-3 font-bold uppercase">{partnerProfile?.username?.charAt(0)}</div><div><h2 className="text-md font-bold leading-tight">{getDisplayName(partnerProfile)}</h2><span className="text-[10px] text-green-600">Çevrimiçi</span></div></div>
-                <div className="flex gap-2"><button onClick={handleAiMediation} className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center"><Brain className="w-4 h-4" /></button><button onClick={() => setIsCalling(true)} className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center"><Phone className="w-4 h-4" /></button></div>
-              </div>
-              
-              <div 
-                className="flex-1 overflow-y-auto p-4 space-y-4 relative overflow-x-hidden select-none"
-                onTouchStart={(e) => handleChatPointerDown(e.touches[0].clientX)}
-                onTouchMove={(e) => handleChatPointerMove(e.touches[0].clientX)}
-                onTouchEnd={handleChatPointerUp}
-                onMouseDown={(e) => handleChatPointerDown(e.clientX)}
-                onMouseMove={(e) => handleChatPointerMove(e.clientX)}
-                onMouseUp={handleChatPointerUp}
-                onMouseLeave={handleChatPointerUp}
-              >
-                {chatMessages.map((msg, index) => {
-                  const isMe = msg.senderId === userProfile.username;
-                  
-                  const currentMsgDate = new Date(msg.ts).toDateString();
-                  const prevMsgDate = index > 0 ? new Date(chatMessages[index - 1].ts).toDateString() : null;
-                  const showDateHeader = currentMsgDate !== prevMsgDate;
-                  
-                  const messageTime = new Date(msg.ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-
-                  return (
-                    <React.Fragment key={msg.id}>
-                      {showDateHeader && (
-                        <div className="flex justify-center my-4">
-                           <span className="bg-slate-200/80 text-slate-500 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
-                             {formatChatDate(msg.ts)}
-                           </span>
-                        </div>
-                      )}
-
-                      {msg.isSystem ? (
-                        <div className="w-full text-center text-[11px] font-bold text-slate-500 bg-slate-200/50 p-2 rounded-xl">{msg.text}</div>
-                      ) : (
-                        <div className={`flex relative w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
-                          <div 
-                            style={{ transform: `translateX(${chatSwipeOffset}px)` }} 
-                            className={`max-w-[75%] rounded-2xl p-3 text-sm shadow-sm flex flex-col z-10 ${isDragging ? 'transition-none' : 'transition-transform duration-200 ease-out'} ${isMe ? 'bg-rose-500 text-white rounded-br-sm' : 'bg-white border border-slate-100 text-slate-800 rounded-bl-sm'}`}
-                          >
-                            {msg.imageUrl && <img src={msg.imageUrl} className="w-full rounded-xl mb-2 max-h-48 object-cover pointer-events-none" />}
-                            <span className="leading-snug">{msg.text}</span>
-                          </div>
-
-                          <div 
-                            className="absolute right-[-45px] top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-400 transition-opacity duration-200"
-                            style={{ 
-                              transform: `translateX(${chatSwipeOffset}px)`, 
-                              opacity: chatSwipeOffset < -20 ? 1 : 0 
-                            }}
-                          >
-                            {messageTime}
-                          </div>
-                        </div>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-                <div ref={chatEndRef} />
-              </div>
-              <div className="bg-white border-t border-slate-200 p-3 flex-shrink-0 relative z-20">
-                {showEmojiPicker && (
-                  <div className="absolute bottom-16 left-3 bg-white border border-slate-200 shadow-lg rounded-2xl p-3 flex flex-wrap gap-2 w-64 z-50 animate-in fade-in slide-in-from-bottom-2">
-                    {customEmojis.map(emoji => (
-                      <button key={emoji} type="button" onClick={() => { setChatInput(prev => prev + emoji); setShowEmojiPicker(false); }} className="text-2xl hover:scale-125 transition-transform">{emoji}</button>
-                    ))}
-                  </div>
-                )}
-                <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
-                  <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors flex-shrink-0"><Smile className="w-6 h-6" /></button>
-                  <input type="text" value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder="Mesaj yaz..." className="flex-1 bg-slate-100 rounded-full px-4 py-3 text-sm outline-none border-none focus:ring-2 focus:ring-rose-200 transition-all" />
-                  <button type="submit" disabled={!chatInput.trim()} className="w-11 h-11 bg-rose-500 rounded-full flex items-center justify-center text-white disabled:bg-slate-300 transition-colors flex-shrink-0 shadow-md hover:bg-rose-600"><Send className="w-5 h-5 ml-0.5" /></button>
-                </form>
-              </div>
-            </div>
-          );
-
-          const renderProfileView = () => (
-            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24">
-              <div className="flex justify-between items-center mb-6 flex-shrink-0"><h2 className="text-xl font-bold">Profil</h2><button onClick={handleLogout} className="text-slate-500 text-sm font-medium flex items-center">Çıkış <LogOut className="w-4 h-4 ml-1"/></button></div>
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex flex-col mb-6 relative overflow-hidden flex-shrink-0">
-                <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-rose-400 to-indigo-500 z-0"></div>
-                <div className="flex flex-col items-center relative z-10 mt-4 mb-4">
-                  <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center border-4 border-white shadow-lg text-4xl uppercase font-bold text-slate-300 mb-3">{userProfile?.username?.charAt(0)}</div>
-                  {!isEditingProfile ? (
-                    <div className="text-center w-full">
-                      <h3 className="text-2xl font-bold flex items-center justify-center">
-                        {getDisplayName(userProfile)}
-                        {isAdmin && <Shield className="w-5 h-5 text-indigo-500 ml-2" title="Sistem Yöneticisi" />}
-                      </h3>
-                      {(userProfile?.name || userProfile?.surname) && <p className="text-rose-500 font-medium text-sm mb-1">@{userProfile?.username}</p>}
-                      <div className="flex flex-wrap justify-center gap-2 mt-2 mb-4"><div className="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full flex items-center"><Brain className="w-3 h-3 mr-1"/> {userProfile?.mbti || 'ENTP'}</div></div>
-                      
-                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mb-4 w-full text-left text-sm text-slate-600 grid grid-cols-2 gap-2">
-                        <div><strong>Doğum:</strong> {userProfile?.birthDate ? new Date(userProfile.birthDate).toLocaleDateString() : '-'}</div>
-                        <div><strong>Cinsiyet:</strong> {userProfile?.gender || '-'}</div>
-                      </div>
-
-                      <button onClick={() => setIsEditingProfile(true)} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center"><Edit className="w-4 h-4 mr-2" /> Profili Düzenle</button>
-                    </div>
-                  ) : (
-                    <form onSubmit={async (e) => { e.preventDefault(); await UserService.updateProfile(userProfile.username, profileForm); setIsEditingProfile(false); }} className="w-full mt-4 space-y-3 bg-white p-4 rounded-2xl shadow-sm border text-left">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div><label className="block text-xs font-semibold text-slate-600 mb-1">Ad</label><input type="text" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} className="w-full bg-slate-50 rounded-lg px-3 py-2 text-sm border outline-none" required placeholder="Adınız" /></div>
-                        <div><label className="block text-xs font-semibold text-slate-600 mb-1">Soyad</label><input type="text" value={profileForm.surname} onChange={e => setProfileForm({...profileForm, surname: e.target.value})} className="w-full bg-slate-50 rounded-lg px-3 py-2 text-sm border outline-none" required placeholder="Soyadınız" /></div>
-                      </div>
-                      <div><label className="block text-xs font-semibold text-slate-600 mb-1">Doğum Tarihi</label><input type="date" value={profileForm.birthDate} onChange={e => setProfileForm({...profileForm, birthDate: e.target.value})} className="w-full bg-slate-50 rounded-lg px-3 py-2 text-sm border outline-none text-slate-700" /></div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Cinsiyet</label>
-                        <select value={profileForm.gender} onChange={e => setProfileForm({...profileForm, gender: e.target.value})} className="w-full bg-slate-50 rounded-lg px-3 py-2 text-sm border outline-none text-slate-700">
-                          <option value="">Seçiniz</option><option value="Kadın">Kadın</option><option value="Erkek">Erkek</option><option value="Diğer">Diğer</option>
-                        </select>
-                      </div>
-                      <div className="flex gap-2 pt-2"><button type="button" onClick={() => setIsEditingProfile(false)} className="flex-1 py-2 bg-slate-100 rounded-lg text-sm font-bold text-slate-600">İptal</button><button type="submit" className="flex-1 py-2 bg-rose-500 text-white rounded-lg text-sm font-bold">Kaydet</button></div>
-                    </form>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-3 flex-shrink-0">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between"><span className="text-sm font-bold">Profil Görünürlüğü</span><button onClick={async () => await UserService.updateProfile(userProfile.username, {isPublic: !userProfile.isPublic})} className={`w-10 h-10 rounded-full flex items-center justify-center ${userProfile?.isPublic ? 'bg-green-100 text-green-600' : 'bg-slate-200 text-slate-500'}`}>{userProfile?.isPublic ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}</button></div>
-                {userProfile?.partnerId && <div className="bg-white p-4 rounded-xl border border-rose-100 flex items-center justify-between mt-4"><span className="text-sm font-bold text-rose-500">Bağlantıyı Kopar</span><button onClick={()=>RelationshipService.disconnect(userProfile.username, partnerProfile?.username)} className="text-xs bg-rose-50 text-rose-600 border px-3 py-1 rounded-full font-bold">Ayrıl</button></div>}
-              </div>
-            </div>
-          );
-
-          const renderAdminView = () => (
-            <div className="flex flex-col h-full bg-slate-50 p-6 overflow-y-auto pb-24 animate-in slide-in-from-bottom-4 relative">
-              {adminMessage && (
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg z-50 animate-in fade-in slide-in-from-top-2 whitespace-nowrap">
-                  {adminMessage}
-                </div>
-              )}
-              
-              {deleteTarget && (
-                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-3xl p-6 w-full max-w-xs shadow-2xl text-center animate-in zoom-in-95">
-                    <Shield className="w-12 h-12 text-rose-500 mx-auto mb-3" />
-                    <h3 className="font-bold text-lg text-slate-800 mb-2">Emin misiniz?</h3>
-                    <p className="text-sm text-slate-600 mb-6">@{deleteTarget} adlı kullanıcıyı ve tüm verilerini sistemden kalıcı olarak silmek üzeresiniz.</p>
-                    <div className="flex gap-2">
-                      <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm">İptal</button>
-                      <button onClick={confirmDeleteUser} className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-sm shadow-md">Evet, Sil</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center mb-6 flex-shrink-0">
-                <h2 className="text-xl font-bold flex items-center text-slate-800"><Shield className="w-6 h-6 mr-2 text-indigo-500"/> Admin Paneli</h2>
-              </div>
-              
-              <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 mb-6 flex-shrink-0 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500"></div>
-                <h3 className="font-bold text-sm text-slate-700 mb-4">Yeni Kullanıcı Ekle</h3>
-                <form onSubmit={handleAdminAddUser} className="space-y-3">
-                  <input type="text" placeholder="Kullanıcı Adı" required value={adminForm.username} onChange={e => setAdminForm({...adminForm, username: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-                  <input type="email" placeholder="E-Posta" required value={adminForm.email} onChange={e => setAdminForm({...adminForm, email: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-                  <input type="text" placeholder="Şifre" required value={adminForm.password} onChange={e => setAdminForm({...adminForm, password: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-                  <button type="submit" className="w-full bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl py-3 text-sm font-bold transition-colors shadow-md">Oluştur</button>
-                </form>
-              </div>
-
-              <div className="flex-1 overflow-y-auto">
-                <h3 className="font-bold text-sm text-slate-700 mb-3 ml-1">Kayıtlı Kullanıcılar ({allUsers.length})</h3>
+          </div>
+        )}
+        
+        {journeyTab === 'board' && (
+          <div className="flex flex-col h-full animate-in fade-in">
+            <form onSubmit={handleAddGoal} className="flex gap-3 mb-6 flex-shrink-0">
+              <input type="text" value={newGoalInput} onChange={e=>setNewGoalInput(e.target.value)} placeholder="Birlikte yeni bir hayal kur..." className="flex-1 bg-white/80 backdrop-blur-md border border-white shadow-lg shadow-slate-200/40 rounded-2xl px-5 py-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all" />
+              <button type="submit" disabled={!newGoalInput.trim()} className="bg-indigo-500 text-white px-5 rounded-2xl font-bold text-2xl shadow-lg shadow-indigo-200 disabled:opacity-50 active:scale-95 transition-all">+</button>
+            </form>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
+              <div className="bg-white/60 backdrop-blur-md rounded-[32px] p-5 border border-white shadow-xl shadow-slate-200/30 flex flex-col max-h-[60vh] overflow-y-auto">
+                <h3 className="font-extrabold text-xs mb-4 text-slate-800 uppercase tracking-widest sticky top-0 bg-white/90 backdrop-blur-md py-2 px-1 rounded-lg z-10 flex items-center"><Map className="w-4 h-4 mr-2 text-rose-500"/> Yapılacaklar</h3>
                 <div className="space-y-3">
-                  {allUsers.map(u => (
-                    <div key={u.username} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center group">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-indigo-50 text-indigo-600 font-bold uppercase rounded-full flex items-center justify-center">
-                          {u.username.charAt(0)}
-                        </div>
-                        <div>
-                          <span className="font-bold text-sm text-slate-800 block">@{u.username}</span>
-                          <span className="text-[10px] text-slate-500 block">{u.email}</span>
-                        </div>
-                      </div>
-                      {u.username !== 'admin' && (
-                        <button onClick={() => setDeleteTarget(u.username)} className="w-9 h-9 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center hover:bg-rose-500 hover:text-white transition-colors opacity-100 md:opacity-50 group-hover:opacity-100">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                  {goals.filter(g => !g.isCompleted).map(g => (
+                    <div key={g.id} onClick={() => toggleGoal(g)} className="bg-white p-4 rounded-2xl shadow-sm text-sm font-medium text-slate-700 border-l-4 border-rose-500 cursor-pointer hover:bg-rose-50 hover:shadow-md transition-all flex justify-between items-center group">
+                      <span className="flex-1">{g.text}</span>
+                      <button onClick={(e) => handleDeleteGoal(g.id, e)} className="text-slate-300 hover:text-rose-500 transition-colors p-2 rounded-full hover:bg-white active:scale-90">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   ))}
+                  {goals.filter(g => !g.isCompleted).length === 0 && <p className="text-xs text-slate-400 text-center py-6 font-medium">Hedef rotası boş.</p>}
+                </div>
+              </div>
+              
+              <div className="bg-white/60 backdrop-blur-md rounded-[32px] p-5 border border-white shadow-xl shadow-slate-200/30 flex flex-col max-h-[60vh] overflow-y-auto">
+                <h3 className="font-extrabold text-xs mb-4 text-slate-800 uppercase tracking-widest sticky top-0 bg-white/90 backdrop-blur-md py-2 px-1 rounded-lg z-10 flex items-center"><Check className="w-4 h-4 mr-2 text-green-500"/> Tamamlananlar</h3>
+                <div className="space-y-3">
+                  {goals.filter(g => g.isCompleted).map(g => (
+                    <div key={g.id} onClick={() => toggleGoal(g)} className="bg-slate-50 p-4 rounded-2xl shadow-inner text-sm font-medium text-slate-500 border-l-4 border-green-400 cursor-pointer hover:bg-slate-100 transition-all flex justify-between items-center group">
+                      <span className="line-through decoration-slate-300 flex-1 opacity-70">{g.text}</span>
+                      <button onClick={(e) => handleDeleteGoal(g.id, e)} className="text-slate-300 hover:text-rose-500 transition-colors p-2 rounded-full hover:bg-white active:scale-90 opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                   {goals.filter(g => g.isCompleted).length === 0 && <p className="text-xs text-slate-400 text-center py-6 font-medium">Henüz tamamlanan yok.</p>}
                 </div>
               </div>
             </div>
-          );
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderVrView = () => (
+    <div className="flex flex-col h-full p-6 overflow-y-auto pb-32 relative animate-in fade-in duration-500">
+      {showPhotoModal && (
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl relative flex flex-col max-h-[90%] overflow-y-auto animate-in zoom-in-95">
+            <button onClick={() => setShowPhotoModal(false)} className="absolute top-5 right-5 bg-slate-100 hover:bg-slate-200 text-slate-500 p-2 rounded-full transition-colors active:scale-90"><X className="w-5 h-5" /></button>
+            <div className="w-14 h-14 bg-rose-100 text-rose-500 rounded-2xl flex items-center justify-center mb-4"><ImagePlus className="w-7 h-7" /></div>
+            <h2 className="text-2xl font-extrabold text-slate-800 mb-6">Sürpriz Fotoğraf</h2>
+            
+            {!photoPreviewUrl ? (
+              <>
+                <div className="flex bg-slate-100/80 p-1.5 rounded-2xl mb-6 shadow-inner"><button onClick={() => setPhotoMode('gallery')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${photoMode === 'gallery' ? 'bg-white shadow-md text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}>Galeriden Seç</button><button onClick={() => setPhotoMode('ai')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center transition-all ${photoMode === 'ai' ? 'bg-white shadow-md text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}><Wand className="w-3.5 h-3.5 mr-1.5"/> AI ile Üret</button></div>
+                {photoMode === 'gallery' ? (
+                  <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-rose-400 rounded-3xl p-10 bg-slate-50/50 relative transition-colors"><input type="file" accept="image/*" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /><Upload className="w-12 h-12 text-slate-300 mb-4" /><p className="text-sm font-bold text-slate-600">Dokun ve Seç</p></div>
+                ) : (
+                  <div className="flex flex-col"><textarea value={aiPhotoPrompt} onChange={e => setAiPhotoPrompt(e.target.value)} placeholder="Örn: Gün batımında el ele tutuşan iki kişi, suluboya tarzı..." className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm font-medium min-h-[120px] resize-none mb-4 focus:ring-2 focus:ring-indigo-400 outline-none transition-all"></textarea><button onClick={handleAiGeneratePhoto} disabled={!aiPhotoPrompt.trim() || isGeneratingPhoto} className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 active:scale-95 transition-all">{isGeneratingPhoto ? <Loader2 className="w-5 h-5 animate-spin"/> : 'Oluştur'}</button></div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center animate-in zoom-in-95"><div className="w-full rounded-[24px] overflow-hidden mb-6 relative shadow-lg"><img src={photoPreviewUrl} className="w-full max-h-[300px] object-cover" /><button onClick={() => setPhotoPreviewUrl(null)} className="absolute top-3 right-3 bg-black/50 backdrop-blur-md text-white p-2 rounded-full hover:bg-black/70 transition-colors"><X className="w-4 h-4"/></button></div><button onClick={handleSendPhotoSurprise} className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold py-4 rounded-2xl shadow-xl shadow-rose-200 active:scale-95 transition-all flex items-center justify-center"><Send className="w-5 h-5 mr-2" /> Baskıya Gönder</button></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeVrRoom && (
+        <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-xl z-50 flex flex-col items-center justify-center text-white animate-in fade-in zoom-in-95"><Sparkles className="w-20 h-20 text-indigo-400 mb-6 animate-spin-slow drop-shadow-[0_0_30px_rgba(99,102,241,0.8)]"/><h2 className="text-3xl font-black mb-2 tracking-tight">Sanal Oda Yükleniyor</h2><p className="text-slate-400 mb-8 font-medium">Bağlantı kuruluyor...</p><button onClick={()=>setActiveVrRoom(null)} className="px-8 py-3.5 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-full font-bold transition-all active:scale-95">Odadan Çık</button></div>
+      )}
+
+      <div className="flex items-center mb-8 flex-shrink-0">
+        <div className="w-12 h-12 bg-white shadow-md shadow-indigo-100 rounded-2xl flex items-center justify-center mr-4 border border-indigo-50"><Gamepad className="w-6 h-6 text-indigo-500"/></div>
+        <h2 className="text-2xl font-extrabold text-slate-800">Sanal Deneyimler</h2>
+      </div>
+      
+      <div className="grid grid-cols-1 gap-5 mb-10">
+        <div onClick={()=>setActiveVrRoom('balloon')} className="group bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-[32px] text-white shadow-xl shadow-indigo-200 cursor-pointer relative overflow-hidden hover:-translate-y-1 transition-all active:scale-95">
+          <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:bg-white/20 transition-colors"></div>
+          <h3 className="font-extrabold text-xl mb-1 relative z-10 flex items-center"><Sparkles className="w-5 h-5 mr-2"/> Kapadokya Balon Turu</h3>
+          <p className="text-indigo-100 text-sm font-medium relative z-10">3D ortak odada buluşun.</p>
+        </div>
+      </div>
+
+      <div className="flex items-center mb-6 flex-shrink-0">
+        <div className="w-12 h-12 bg-white shadow-md shadow-rose-100 rounded-2xl flex items-center justify-center mr-4 border border-rose-50"><Coffee className="w-6 h-6 text-rose-500"/></div>
+        <h2 className="text-2xl font-extrabold text-slate-800">Fiziksel Sürprizler</h2>
+      </div>
+      
+      <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] shadow-xl shadow-slate-200/50 border border-white text-center">
+        <div className="flex flex-col sm:flex-row gap-4 w-full">
+          <button onClick={()=>handleSendPhysicalGift('Filtre Kahve ☕️')} className="flex-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 py-4 rounded-2xl text-sm font-bold text-slate-700 shadow-sm active:scale-95 transition-all flex items-center justify-center"><Coffee className="w-4 h-4 mr-2 text-amber-700"/> Kahve Ismarla</button>
+          <button onClick={()=>setShowPhotoModal(true)} className="flex-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 py-4 rounded-2xl text-sm font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center"><ImagePlus className="w-4 h-4 mr-2"/> Fotoğraf Yolla</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderChatView = () => (
+    <div className="flex flex-col h-full relative pb-28 overflow-hidden bg-slate-50/50">
+      <div className="bg-white/85 backdrop-blur-2xl border-b border-white/60 p-4 flex items-center justify-between shadow-[0_10px_40px_rgba(0,0,0,0.05)] z-20 flex-shrink-0 relative">
+        <div className="flex items-center">
+          <div className="relative">
+            <div className="w-11 h-11 rounded-[18px] bg-gradient-to-br from-rose-100 to-indigo-100 text-slate-700 flex items-center justify-center mr-3 font-black text-lg uppercase shadow-inner border border-white">{partnerProfile?.username?.charAt(0)}</div>
+            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
+          </div>
+          <div>
+            <h2 className="text-base font-extrabold text-slate-800 leading-tight">{getDisplayName(partnerProfile)}</h2>
+            <span className="text-[11px] font-bold text-slate-400">Çevrimiçi</span>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={handleAiMediation} className="w-10 h-10 rounded-[16px] bg-indigo-50 text-indigo-500 hover:bg-indigo-100 flex items-center justify-center transition-colors active:scale-90"><Brain className="w-5 h-5" /></button>
+          <button onClick={() => setIsCalling(true)} className="w-10 h-10 rounded-[16px] bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors active:scale-90"><Phone className="w-5 h-5" /></button>
+        </div>
+      </div>
+      
+      <div 
+        className="flex-1 overflow-y-auto p-5 space-y-5 relative overflow-x-hidden select-none bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-fixed"
+        onTouchStart={(e) => handleChatPointerDown(e.touches[0].clientX)}
+        onTouchMove={(e) => handleChatPointerMove(e.touches[0].clientX)}
+        onTouchEnd={handleChatPointerUp}
+        onMouseDown={(e) => handleChatPointerDown(e.clientX)}
+        onMouseMove={(e) => handleChatPointerMove(e.clientX)}
+        onMouseUp={handleChatPointerUp}
+        onMouseLeave={handleChatPointerUp}
+      >
+        {chatMessages.map((msg, index) => {
+          const isMe = msg.senderId === userProfile.username;
+          const currentMsgDate = new Date(msg.ts).toDateString();
+          const prevMsgDate = index > 0 ? new Date(chatMessages[index - 1].ts).toDateString() : null;
+          const showDateHeader = currentMsgDate !== prevMsgDate;
+          const messageTime = new Date(msg.ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
           return (
-            <div className="min-h-[100dvh] w-full flex items-center justify-center font-sans text-slate-900 bg-slate-200">
-              <div className="w-full max-w-2xl h-[100dvh] bg-white md:shadow-2xl overflow-hidden relative flex flex-col">
-                {isCalling && <div className="absolute inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center text-white p-6 animate-in fade-in"><h2 className="text-3xl font-bold mb-2">@{partnerProfile?.username}</h2><p className="text-slate-400 mb-16">Aranıyor...</p><button onClick={()=>setIsCalling(false)} className="w-16 h-16 bg-rose-600 rounded-full flex items-center justify-center"><PhoneOff className="w-8 h-8" /></button></div>}
-
-                <div className="flex-1 min-h-0 relative flex flex-col">
-                  {activeTab === 'admin' ? (
-                    renderAdminView()
-                  ) : !userProfile?.partnerId ? (
-                    <>{activeTab === 'home' && renderDiscoverView()}{activeTab === 'requests' && renderRequestsView()}{activeTab === 'profile' && renderProfileView()}{(activeTab === 'journey' || activeTab === 'vr' || activeTab === 'chat') && renderDiscoverView()}</>
-                  ) : (
-                    <>{activeTab === 'home' && renderHomeView()}{activeTab === 'journey' && renderJourneyView()}{activeTab === 'vr' && renderVrView()}{activeTab === 'chat' && renderChatView()}{activeTab === 'profile' && renderProfileView()}</>
-                  )}
+            <React.Fragment key={msg.id}>
+              {showDateHeader && (
+                <div className="flex justify-center my-6">
+                   <span className="bg-white/80 backdrop-blur-md text-slate-500 text-[10px] font-extrabold px-4 py-1.5 rounded-full uppercase tracking-widest shadow-sm border border-white">
+                     {formatChatDate(msg.ts)}
+                   </span>
                 </div>
+              )}
 
-                <div className="w-full bg-white border-t border-slate-200 flex items-center justify-around px-2 pb-6 md:pb-4 pt-2 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-40 flex-shrink-0">
-                  {!userProfile?.partnerId ? (
-                    <>
-                      <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'home' ? 'text-rose-500' : 'text-slate-400'}`}><Search className={`w-6 h-6 mb-1 ${activeTab==='home'?'scale-110':''}`} /><span className="text-[10px] font-medium">Keşfet</span></button>
-                      <button onClick={()=>setActiveTab('requests')} className={`flex flex-col items-center justify-center w-20 h-full relative ${activeTab === 'requests' ? 'text-rose-500' : 'text-slate-400'}`}><Bell className={`w-6 h-6 mb-1 ${activeTab==='requests'?'scale-110':''}`} />{userProfile?.pendingRequests?.length > 0 && <span className="absolute top-0 right-4 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{userProfile.pendingRequests.length}</span>}<span className="text-[10px] font-medium">İstekler</span></button>
-                      <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px] font-medium">Profil</span></button>
-                      {isAdmin && (
-                        <button onClick={()=>setActiveTab('admin')} className={`flex flex-col items-center justify-center w-20 h-full ${activeTab === 'admin' ? 'text-indigo-500' : 'text-slate-400'}`}><Shield className={`w-6 h-6 mb-1 ${activeTab==='admin'?'scale-110':''}`} /><span className="text-[10px] font-medium">Admin</span></button>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'home' ? 'text-rose-500' : 'text-slate-400'}`}><Heart className={`w-6 h-6 mb-1 ${activeTab==='home'?'fill-rose-500 scale-110':''}`} /><span className="text-[10px]">Özledim</span></button>
-                      <button onClick={()=>setActiveTab('journey')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'journey' ? 'text-rose-500' : 'text-slate-400'}`}><Map className={`w-6 h-6 mb-1 ${activeTab==='journey'?'scale-110':''}`} /><span className="text-[10px]">Rota</span></button>
-                      <button onClick={()=>setActiveTab('vr')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'vr' ? 'text-indigo-500' : 'text-slate-400'}`}><Gamepad className={`w-6 h-6 mb-1 ${activeTab==='vr'?'scale-110':''}`} /><span className="text-[10px]">Sürpriz</span></button>
-                      <button onClick={()=>setActiveTab('chat')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'chat' ? 'text-rose-500' : 'text-slate-400'}`}><MessageCircle className={`w-6 h-6 mb-1 ${activeTab==='chat'?'scale-110':''}`} /><span className="text-[10px]">Sohbet</span></button>
-                      <button onClick={()=>setActiveTab('profile')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'profile' ? 'text-rose-500' : 'text-slate-400'}`}><User className={`w-6 h-6 mb-1 ${activeTab==='profile'?'scale-110':''}`} /><span className="text-[10px]">Profil</span></button>
-                      {isAdmin && (
-                        <button onClick={()=>setActiveTab('admin')} className={`flex flex-col items-center justify-center w-16 h-full ${activeTab === 'admin' ? 'text-indigo-500' : 'text-slate-400'}`}><Shield className={`w-6 h-6 mb-1 ${activeTab==='admin'?'scale-110':''}`} /><span className="text-[10px]">Admin</span></button>
-                      )}
-                    </>
-                  )}
+              {msg.isSystem ? (
+                <div className="flex justify-center w-full">
+                  <div className="text-center text-[11px] font-bold text-slate-500 bg-slate-200/60 backdrop-blur-sm px-4 py-2 rounded-2xl max-w-[85%] leading-relaxed">{msg.text}</div>
+                </div>
+              ) : (
+                <div className={`flex relative w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+                  <div 
+                    style={{ transform: `translateX(${chatSwipeOffset}px)` }} 
+                    className={`max-w-[75%] rounded-[24px] p-4 text-[15px] font-medium flex flex-col z-10 ${isDragging ? 'transition-none' : 'transition-transform duration-200 ease-out'} ${isMe ? 'bg-gradient-to-br from-rose-500 to-pink-500 text-white shadow-md shadow-rose-200 rounded-br-sm' : 'bg-white text-slate-700 shadow-md shadow-slate-200/50 border border-slate-100 rounded-bl-sm'}`}
+                  >
+                    {msg.imageUrl && <img src={msg.imageUrl} className="w-full rounded-[16px] mb-3 max-h-56 object-cover pointer-events-none shadow-sm" />}
+                    <span className="leading-snug">{msg.text}</span>
+                  </div>
+
+                  <div 
+                    className="absolute right-[-50px] top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 transition-opacity duration-200 bg-white/80 backdrop-blur-sm px-2 py-1 rounded-lg shadow-sm border border-slate-100"
+                    style={{ transform: `translateX(${chatSwipeOffset}px)`, opacity: chatSwipeOffset < -30 ? 1 : 0 }}
+                  >
+                    {messageTime}
+                  </div>
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+        <div ref={chatEndRef} />
+      </div>
+
+      <div className="bg-white/85 backdrop-blur-2xl border border-white/60 p-4 flex-shrink-0 absolute bottom-24 md:bottom-20 left-0 right-0 z-20">
+        {showEmojiPicker && (
+          <div className="absolute bottom-20 left-4 bg-white/90 backdrop-blur-xl border border-white shadow-2xl rounded-3xl p-4 flex flex-wrap gap-3 w-72 z-50 animate-in fade-in slide-in-from-bottom-4">
+            {customEmojis.map(emoji => (
+              <button key={emoji} type="button" onClick={() => { setChatInput(prev => prev + emoji); setShowEmojiPicker(false); }} className="text-2xl hover:scale-125 hover:-translate-y-1 transition-all active:scale-95">{emoji}</button>
+            ))}
+          </div>
+        )}
+        <form onSubmit={handleSendMessage} className="flex items-end space-x-3 max-w-full">
+          <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-500 hover:text-rose-500 hover:bg-rose-50 transition-colors flex-shrink-0 active:scale-90"><Smile className="w-6 h-6" /></button>
+          <div className="flex-1 bg-white border border-slate-200 shadow-sm rounded-3xl relative flex items-center overflow-hidden">
+            <input type="text" value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder="Bir mesaj yaz..." className="w-full bg-transparent px-5 py-4 text-sm font-medium outline-none text-slate-700 placeholder:text-slate-400" />
+          </div>
+          <button type="submit" disabled={!chatInput.trim()} className="w-12 h-12 bg-gradient-to-tr from-rose-500 to-pink-500 rounded-2xl flex items-center justify-center text-white disabled:opacity-50 disabled:from-slate-300 disabled:to-slate-300 transition-all flex-shrink-0 shadow-lg shadow-rose-200 active:scale-90"><Send className="w-5 h-5 ml-1" /></button>
+        </form>
+      </div>
+    </div>
+  );
+
+  const renderProfileView = () => (
+    <div className="flex flex-col h-full p-6 overflow-y-auto animate-in fade-in duration-500 pb-32">
+      <div className="flex justify-between items-center mb-8 flex-shrink-0">
+        <h2 className="text-3xl font-extrabold text-slate-800">Profil</h2>
+        <button onClick={handleLogout} className="bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center transition-colors active:scale-95">Çıkış <LogOut className="w-4 h-4 ml-2"/></button>
+      </div>
+      
+      <div className="bg-white/70 backdrop-blur-xl rounded-[36px] p-6 shadow-xl shadow-slate-200/50 flex flex-col mb-8 relative overflow-hidden flex-shrink-0 border border-white/50">
+        <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-rose-400 via-pink-500 to-indigo-500 z-0"></div>
+        <div className="flex flex-col items-center relative z-10 mt-10 mb-2">
+          <div className="w-28 h-28 bg-white rounded-[32px] flex items-center justify-center border-4 border-white shadow-xl text-5xl uppercase font-black text-slate-300 mb-4 rotate-3">{userProfile?.username?.charAt(0)}</div>
+          {!isEditingProfile ? (
+            <div className="text-center w-full animate-in fade-in">
+              <h3 className="text-2xl font-extrabold flex items-center justify-center text-slate-800">
+                {getDisplayName(userProfile)}
+                {isAdmin && <Shield className="w-6 h-6 text-indigo-500 ml-2 drop-shadow-sm" title="Sistem Yöneticisi" />}
+              </h3>
+              {(userProfile?.name || userProfile?.surname) && <p className="text-rose-500 font-bold text-sm mb-2">@{userProfile?.username}</p>}
+              <div className="flex flex-wrap justify-center gap-2 mt-3 mb-6"><div className="bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs font-extrabold px-4 py-1.5 rounded-full flex items-center shadow-sm"><Brain className="w-3.5 h-3.5 mr-1.5"/> {userProfile?.mbti || 'ENTP'}</div></div>
+              
+              <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm mb-6 w-full text-left text-sm text-slate-700 grid grid-cols-2 gap-4">
+                <div><span className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Doğum Tarihi</span> <span className="font-semibold">{userProfile?.birthDate ? new Date(userProfile.birthDate).toLocaleDateString() : '-'}</span></div>
+                <div><span className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Cinsiyet</span> <span className="font-semibold">{userProfile?.gender || '-'}</span></div>
+              </div>
+
+              <button onClick={() => setIsEditingProfile(true)} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3.5 rounded-2xl text-sm font-bold flex items-center justify-center shadow-lg active:scale-95 transition-all"><Edit className="w-4 h-4 mr-2" /> Profili Düzenle</button>
+            </div>
+          ) : (
+            <form onSubmit={async (e) => { e.preventDefault(); await UserService.updateProfile(userProfile.username, profileForm); setIsEditingProfile(false); }} className="w-full mt-4 space-y-4 bg-white/90 backdrop-blur-md p-6 rounded-[28px] shadow-lg border border-white text-left animate-in zoom-in-95">
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-[11px] uppercase tracking-wider font-bold text-slate-500 mb-1.5 ml-1">Ad</label><input type="text" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} className="w-full bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium border border-slate-200 outline-none focus:ring-2 focus:ring-rose-400" required placeholder="Adınız" /></div>
+                <div><label className="block text-[11px] uppercase tracking-wider font-bold text-slate-500 mb-1.5 ml-1">Soyad</label><input type="text" value={profileForm.surname} onChange={e => setProfileForm({...profileForm, surname: e.target.value})} className="w-full bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium border border-slate-200 outline-none focus:ring-2 focus:ring-rose-400" required placeholder="Soyadınız" /></div>
+              </div>
+              <div><label className="block text-[11px] uppercase tracking-wider font-bold text-slate-500 mb-1.5 ml-1">Doğum Tarihi</label><input type="date" value={profileForm.birthDate} onChange={e => setProfileForm({...profileForm, birthDate: e.target.value})} className="w-full bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium border border-slate-200 outline-none text-slate-700 focus:ring-2 focus:ring-rose-400" /></div>
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider font-bold text-slate-500 mb-1.5 ml-1">Cinsiyet</label>
+                <select value={profileForm.gender} onChange={e => setProfileForm({...profileForm, gender: e.target.value})} className="w-full bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium border border-slate-200 outline-none text-slate-700 focus:ring-2 focus:ring-rose-400">
+                  <option value="">Seçiniz</option><option value="Kadın">Kadın</option><option value="Erkek">Erkek</option><option value="Diğer">Diğer</option>
+                </select>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button type="button" onClick={() => setIsEditingProfile(false)} className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 rounded-2xl text-sm font-bold text-slate-600 transition-colors active:scale-95">İptal</button>
+                <button type="submit" className="flex-1 py-3.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl text-sm font-bold shadow-md shadow-rose-200 transition-all active:scale-95">Kaydet</button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+      
+      <div className="space-y-4 flex-shrink-0">
+        <div className="bg-white/70 backdrop-blur-xl p-5 rounded-3xl border border-white/50 shadow-sm flex items-center justify-between">
+          <div className="flex flex-col"><span className="text-sm font-bold text-slate-800">Profil Görünürlüğü</span><span className="text-[10px] font-medium text-slate-400">Diğerleri sizi bulabilir</span></div>
+          <button onClick={async () => await UserService.updateProfile(userProfile.username, {isPublic: !userProfile.isPublic})} className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors active:scale-90 ${userProfile?.isPublic ? 'bg-green-100 text-green-600 shadow-inner' : 'bg-slate-200 text-slate-500 shadow-inner'}`}>{userProfile?.isPublic ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}</button>
+        </div>
+        
+        {userProfile?.partnerId && (
+          <div className="bg-white/80 p-5 rounded-3xl border border-rose-100 shadow-sm flex items-center justify-between mt-6">
+            <div className="flex flex-col"><span className="text-sm font-bold text-rose-600">Bağlantıyı Kopar</span><span className="text-[10px] font-medium text-rose-400/70">Tüm ortak veriler silinir</span></div>
+            <button onClick={()=>RelationshipService.disconnect(userProfile.username, partnerProfile?.username)} className="text-xs bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 px-4 py-2.5 rounded-xl font-bold transition-colors active:scale-95">Ayrıl</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderAdminView = () => (
+    <div className="flex flex-col h-full p-6 overflow-y-auto pb-32 animate-in slide-in-from-bottom-4 relative">
+      {adminMessage && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-md text-white px-6 py-3 rounded-full text-xs font-bold shadow-xl z-50 animate-in fade-in slide-in-from-top-4 whitespace-nowrap border border-slate-700">
+          {adminMessage}
+        </div>
+      )}
+      
+      {deleteTarget && (
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[32px] p-8 w-full max-w-sm shadow-2xl text-center animate-in zoom-in-95">
+            <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4"><Shield className="w-8 h-8 text-rose-500" /></div>
+            <h3 className="font-extrabold text-2xl text-slate-800 mb-2">Emin misiniz?</h3>
+            <p className="text-sm font-medium text-slate-500 mb-8 leading-relaxed"><strong className="text-rose-500">@{deleteTarget}</strong> adlı kullanıcıyı ve tüm verilerini sistemden kalıcı olarak silmek üzeresiniz.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm transition-colors active:scale-95">İptal</button>
+              <button onClick={confirmDeleteUser} className="flex-1 py-3.5 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-rose-200 transition-all active:scale-95">Evet, Sil</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-between items-center mb-8 flex-shrink-0">
+        <h2 className="text-3xl font-extrabold flex items-center text-slate-800"><Shield className="w-8 h-8 mr-3 text-indigo-500 drop-shadow-md"/> Admin Paneli</h2>
+      </div>
+      
+      <div className="bg-white/70 backdrop-blur-xl rounded-[32px] p-6 shadow-xl shadow-slate-200/40 border border-white/50 mb-8 flex-shrink-0 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-indigo-400 to-purple-500"></div>
+        <h3 className="font-extrabold text-sm text-slate-800 mb-5 uppercase tracking-wider flex items-center"><UserPlus className="w-4 h-4 mr-2 text-indigo-500"/> Yeni Kullanıcı Ekle</h3>
+        <form onSubmit={handleAdminAddUser} className="space-y-4">
+          <input type="text" placeholder="Kullanıcı Adı" required value={adminForm.username} onChange={e => setAdminForm({...adminForm, username: e.target.value})} className="w-full bg-white/80 border border-slate-200 rounded-2xl px-5 py-3.5 text-sm font-medium focus:ring-2 focus:ring-indigo-400 outline-none shadow-sm transition-all" />
+          <input type="email" placeholder="E-Posta" required value={adminForm.email} onChange={e => setAdminForm({...adminForm, email: e.target.value})} className="w-full bg-white/80 border border-slate-200 rounded-2xl px-5 py-3.5 text-sm font-medium focus:ring-2 focus:ring-indigo-400 outline-none shadow-sm transition-all" />
+          <input type="text" placeholder="Şifre" required value={adminForm.password} onChange={e => setAdminForm({...adminForm, password: e.target.value})} className="w-full bg-white/80 border border-slate-200 rounded-2xl px-5 py-3.5 text-sm font-medium focus:ring-2 focus:ring-indigo-400 outline-none shadow-sm transition-all" />
+          <button type="submit" className="w-full bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl py-4 text-sm font-bold transition-all shadow-lg shadow-indigo-200 active:scale-95 mt-2">Kullanıcı Oluştur</button>
+        </form>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <h3 className="font-extrabold text-xs text-slate-500 mb-4 ml-2 uppercase tracking-widest flex items-center"><User className="w-3.5 h-3.5 mr-2"/> Kayıtlı Sistem Kullanıcıları <span className="ml-auto bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[10px]">{allUsers.length}</span></h3>
+        <div className="space-y-3">
+          {allUsers.map(u => (
+            <div key={u.username} className="bg-white/80 backdrop-blur-sm p-4 rounded-2xl shadow-sm border border-white flex justify-between items-center group hover:shadow-md transition-all">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-gradient-to-br from-slate-100 to-indigo-50 text-indigo-600 font-black uppercase rounded-xl flex items-center justify-center border border-white shadow-inner">
+                  {u.username.charAt(0)}
+                </div>
+                <div>
+                  <span className="font-extrabold text-[15px] text-slate-800 block">@{u.username}</span>
+                  <span className="text-[11px] font-medium text-slate-400 block mt-0.5">{u.email}</span>
                 </div>
               </div>
+              {u.username !== 'admin' && (
+                <button onClick={() => setDeleteTarget(u.username)} className="w-10 h-10 bg-slate-50 border border-slate-100 text-slate-400 rounded-xl flex items-center justify-center hover:bg-rose-500 hover:text-white hover:border-rose-500 transition-all opacity-100 md:opacity-40 group-hover:opacity-100 active:scale-90">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
-          );
-        }
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 
-        const root = createRoot(document.getElementById('root'));
-        root.render(<ErrorBoundary><App /></ErrorBoundary>);
-    </script>
-</body>
-</html>
+  const NavItem = ({ id, icon: Icon, label, colorClass, badge, onClick }) => {
+    const isActive = activeTab === id;
+    return (
+      <button onClick={onClick} className="relative flex flex-col items-center justify-center w-16 h-14 group">
+        <div className={`flex flex-col items-center justify-center transition-all duration-300 ${isActive ? '-translate-y-2' : 'group-hover:-translate-y-1'}`}>
+          <div className={`relative p-2.5 rounded-2xl transition-all duration-300 ${isActive ? `bg-gradient-to-br ${colorClass} text-white shadow-lg` : 'text-slate-400'}`}>
+            <Icon className={`w-6 h-6 ${isActive ? '' : 'group-hover:scale-110 transition-transform'}`} />
+            {badge > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-black border-2 border-white flex items-center justify-center animate-bounce">{badge}</span>}
+          </div>
+          <span className={`absolute -bottom-5 text-[10px] font-bold transition-all duration-300 ${isActive ? 'opacity-100 text-slate-800' : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 text-slate-400'}`}>{label}</span>
+        </div>
+      </button>
+    );
+  };
+
+  return (
+    <div className="min-h-[100dvh] w-full flex items-center justify-center font-sans text-slate-900 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-rose-100 via-slate-50 to-indigo-100 selection:bg-rose-200 selection:text-rose-900">
+      <div className="w-full max-w-2xl h-[100dvh] bg-transparent overflow-hidden relative flex flex-col md:shadow-[0_0_80px_rgba(0,0,0,0.05)] md:border-x md:border-white/50">
+        
+        {isCalling && <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex flex-col items-center justify-center text-white p-6 animate-in fade-in zoom-in-95"><div className="w-24 h-24 bg-rose-500/20 rounded-full flex items-center justify-center animate-ping absolute"></div><div className="w-24 h-24 bg-rose-500 rounded-full flex items-center justify-center z-10 shadow-[0_0_50px_rgba(225,29,72,0.8)]"><Phone className="w-10 h-10 animate-pulse" /></div><h2 className="text-3xl font-black mt-8 mb-2 tracking-tight">@{partnerProfile?.username}</h2><p className="text-slate-300 font-medium mb-16">Bağlantı kuruluyor...</p><button onClick={()=>setIsCalling(false)} className="w-16 h-16 bg-rose-600 hover:bg-rose-700 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all"><PhoneOff className="w-7 h-7" /></button></div>}
+
+        <div className="flex-1 min-h-0 relative flex flex-col">
+          {activeTab === 'admin' ? (
+            renderAdminView()
+          ) : !userProfile?.partnerId ? (
+            <>{activeTab === 'home' && renderDiscoverView()}{activeTab === 'requests' && renderRequestsView()}{activeTab === 'profile' && renderProfileView()}{(activeTab === 'journey' || activeTab === 'vr' || activeTab === 'chat') && renderDiscoverView()}</>
+          ) : (
+            <>{activeTab === 'home' && renderHomeView()}{activeTab === 'journey' && renderJourneyView()}{activeTab === 'vr' && renderVrView()}{activeTab === 'chat' && renderChatView()}{activeTab === 'profile' && renderProfileView()}</>
+          )}
+        </div>
+
+        <div className="absolute bottom-0 left-0 right-0 p-4 pb-safe z-40 pointer-events-none">
+          <div className="bg-white/85 backdrop-blur-2xl border border-white/60 rounded-3xl shadow-[0_10px_40px_rgba(0,0,0,0.08)] flex items-center justify-around px-2 py-3 pointer-events-auto max-w-[calc(100%-2rem)] mx-auto">
+            {!userProfile?.partnerId ? (
+              <>
+                <NavItem id="home" icon={Search} label="Keşfet" colorClass="from-rose-400 to-pink-500 shadow-rose-200" onClick={()=>setActiveTab('home')} />
+                <NavItem id="requests" icon={Bell} label="İstekler" badge={userProfile?.pendingRequests?.length} colorClass="from-rose-400 to-pink-500 shadow-rose-200" onClick={()=>setActiveTab('requests')} />
+                <NavItem id="profile" icon={User} label="Profil" colorClass="from-rose-400 to-pink-500 shadow-rose-200" onClick={()=>setActiveTab('profile')} />
+                {isAdmin && <NavItem id="admin" icon={Shield} label="Admin" colorClass="from-indigo-400 to-purple-500 shadow-indigo-200" onClick={()=>setActiveTab('admin')} />}
+              </>
+            ) : (
+              <>
+                <NavItem id="home" icon={Heart} label="Ana Ekran" colorClass="from-rose-400 to-pink-500 shadow-rose-200" onClick={()=>setActiveTab('home')} />
+                <NavItem id="journey" icon={Map} label="Rota" colorClass="from-rose-400 to-pink-500 shadow-rose-200" onClick={()=>setActiveTab('journey')} />
+                <NavItem id="vr" icon={Gamepad} label="Sürpriz" colorClass="from-indigo-400 to-purple-500 shadow-indigo-200" onClick={()=>setActiveTab('vr')} />
+                <NavItem id="chat" icon={MessageCircle} label="Sohbet" colorClass="from-rose-400 to-pink-500 shadow-rose-200" onClick={()=>setActiveTab('chat')} />
+                <NavItem id="profile" icon={User} label="Profil" colorClass="from-slate-600 to-slate-800 shadow-slate-300" onClick={()=>setActiveTab('profile')} />
+                {isAdmin && <NavItem id="admin" icon={Shield} label="Admin" colorClass="from-indigo-400 to-purple-500 shadow-indigo-200" onClick={()=>setActiveTab('admin')} />}
+              </>
+            )}
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  );
+}
